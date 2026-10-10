@@ -22,7 +22,8 @@ public record UserDto(
     string? DisplayName,
     string? Phone,
     string Role,
-    string? PhotoUrl
+    string? PhotoUrl,
+    long UserId = 0
 );
 
 public record VehicleDto(

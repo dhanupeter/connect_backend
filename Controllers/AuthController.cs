@@ -110,7 +110,8 @@ public class AuthController : ControllerBase
                 $"{savedUser.FirstName} {savedUser.LastName}".Trim(),
                 savedUser.MobileNumber,
                 "EV_OWNER",
-                savedUser.ProfileImageUrl
+                savedUser.ProfileImageUrl,
+                savedUser.UserId
             ),
             Vehicle: new VehicleDto(
                 vehicle.RegistrationNumber,
