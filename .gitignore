@@ -29,3 +29,9 @@ bld/
 ## Uploaded user chat files
 wwwroot/uploads/chat/*
 !wwwroot/uploads/chat/.gitkeep
+
+## Credentials & GCP Keys
+gcp-key.json
+*firebase-adminsdk*.json
+*event-506117*.json
+*.key
