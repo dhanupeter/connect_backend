@@ -187,9 +187,21 @@ public class BigQueryService : IBigQueryService
                     c.participant_count,
                     c.created_at,
                     c.updated_at,
-                    (SELECT message_text FROM `{ProjectId}.{DatasetId}.chat_messages` m WHERE m.conversation_id = c.conversation_id ORDER BY m.created_at DESC LIMIT 1) AS last_message,
-                    (SELECT created_at FROM `{ProjectId}.{DatasetId}.chat_messages` m WHERE m.conversation_id = c.conversation_id ORDER BY m.created_at DESC LIMIT 1) AS last_message_time
+                    lm.message_text AS last_message,
+                    lm.created_at AS last_message_time
                 FROM `{ProjectId}.{DatasetId}.chat_conversations` c
+                LEFT JOIN (
+                    SELECT conversation_id, message_text, created_at
+                    FROM (
+                        SELECT 
+                            conversation_id, 
+                            message_text, 
+                            created_at,
+                            ROW_NUMBER() OVER(PARTITION BY conversation_id ORDER BY created_at DESC) as rn
+                        FROM `{ProjectId}.{DatasetId}.chat_messages`
+                    )
+                    WHERE rn = 1
+                ) lm ON c.conversation_id = lm.conversation_id
                 ORDER BY c.updated_at DESC
             ";
 
