@@ -9,7 +9,7 @@ public class StationRepository : IStationRepository
 {
     private readonly IDbConnectionFactory _connectionFactory;
 
-    private static readonly List<ChargingStation> _mockStations = new()
+    private static readonly List<ChargingStation> _fallbackStations = new()
     {
         new()
         {
@@ -77,7 +77,7 @@ public class StationRepository : IStationRepository
         }
         catch { }
 
-        return _mockStations;
+        return _fallbackStations;
     }
 
     public async Task<ChargingStation?> GetByIdAsync(long stationId)
@@ -95,7 +95,7 @@ public class StationRepository : IStationRepository
         }
         catch { }
 
-        return _mockStations.FirstOrDefault(s => s.StationId == stationId);
+        return _fallbackStations.FirstOrDefault(s => s.StationId == stationId);
     }
 
     public async Task<IEnumerable<ChargingConnector>> GetConnectorsByStationIdAsync(long stationId)
@@ -114,8 +114,8 @@ public class StationRepository : IStationRepository
         }
         catch { }
 
-        var mock = _mockStations.FirstOrDefault(s => s.StationId == stationId);
-        return mock?.Connectors ?? Enumerable.Empty<ChargingConnector>();
+        var fallback = _fallbackStations.FirstOrDefault(s => s.StationId == stationId);
+        return fallback?.Connectors ?? Enumerable.Empty<ChargingConnector>();
     }
 }
 

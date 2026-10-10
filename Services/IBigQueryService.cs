@@ -12,8 +12,15 @@ public interface IBigQueryService
     Task<IEnumerable<string>> GetTablesAsync();
     Task<long> GetTableRowCountAsync(string tableName);
     Task InsertChatMessageAsync(ChatMessage message);
+    Task InsertConversationAsync(Conversation conv);
+    Task<IEnumerable<Conversation>> GetConversationsAsync(long userId);
+    Task<IEnumerable<ChatMessage>> GetMessagesAsync(string conversationId, int limit);
+    Task<IEnumerable<NearbyUserDto>> GetNearbyUsersAsync(double lat, double lng, double radiusKm);
+    Task<IEnumerable<NearbyUserDto>> GetContactsAsync();
+    Task UpdateUserLocationAsync(long userId, double lat, double lng, bool isDiscoverable);
     Task InsertTelemetryAsync(VehicleTelemetry telemetry);
     Task InsertReservationAsync(ChargingReservation res);
     Task InsertOrUpdateUserAsync(User user);
     Task InsertOrUpdateVehicleAsync(Vehicle vehicle);
 }
+

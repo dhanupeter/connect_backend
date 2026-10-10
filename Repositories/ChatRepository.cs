@@ -3,6 +3,7 @@ using System.Data;
 using ConnectBackend.Data;
 using ConnectBackend.Models;
 using ConnectBackend.Repositories.Interfaces;
+using ConnectBackend.Services;
 using Dapper;
 
 namespace ConnectBackend.Repositories;
@@ -16,174 +17,24 @@ public class ChatRepository : IChatRepository
     private static readonly ConcurrentDictionary<string, List<ChatMessage>> _memoryMessages = new();
     private static readonly ConcurrentDictionary<long, NearbyUserDto> _registeredUsers = new();
 
-    static ChatRepository()
-    {
-        // Seed real registered users into memory cache
-        var initialUsers = new List<NearbyUserDto>
-        {
-            new()
-            {
-                UserId = 1,
-                Name = "Vikram Sharma",
-                Email = "tester@connectev.com",
-                AvatarUrl = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80",
-                CarModel = "Tata Nexon EV Max",
-                Plate = "TN 38 EV 8903",
-                Soc = 82,
-                Latitude = 11.0168,
-                Longitude = 76.9558,
-                Status = "Online"
-            },
-            new()
-            {
-                UserId = 2,
-                Name = "Sarah Jenkins",
-                Email = "sarah.jenkins@gmail.com",
-                AvatarUrl = "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=150&q=80",
-                CarModel = "MG ZS EV Exclusive",
-                Plate = "TN 37 EV 1990",
-                Soc = 88,
-                Latitude = 11.0250,
-                Longitude = 76.9620,
-                Status = "Online"
-            },
-            new()
-            {
-                UserId = 3,
-                Name = "Alex Rivas",
-                Email = "alex.rivas@gmail.com",
-                AvatarUrl = "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80",
-                CarModel = "Hyundai Ioniq 5 AWD",
-                Plate = "KL 07 EV 8821",
-                Soc = 65,
-                Latitude = 11.0450,
-                Longitude = 77.0120,
-                Status = "Driving"
-            },
-            new()
-            {
-                UserId = 4,
-                Name = "Dhanu Peter",
-                Email = "dhanupeter@gmail.com",
-                AvatarUrl = "https://lh3.googleusercontent.com/a/default-user",
-                CarModel = "Electric Vehicle",
-                Plate = "TN 38 BK 4210",
-                Soc = 94,
-                Latitude = 11.0168,
-                Longitude = 76.9558,
-                Status = "Online"
-            },
-            new()
-            {
-                UserId = 5,
-                Name = "VELANKANNI J",
-                Email = "vj8875613@gmail.com",
-                AvatarUrl = "https://lh3.googleusercontent.com/a/default-user",
-                CarModel = "BYD Atto 3 Superior",
-                Plate = "TN 39 BC 7701",
-                Soc = 78,
-                Latitude = 11.0180,
-                Longitude = 76.9580,
-                Status = "Online"
-            },
-            new()
-            {
-                UserId = 6,
-                Name = "Dr. Sarah Thomas",
-                Email = "sarah.thomas@gmail.com",
-                AvatarUrl = "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=150&q=80",
-                CarModel = "MG ZS EV",
-                Plate = "TN 37 EV 1990",
-                Soc = 90,
-                Latitude = 11.0250,
-                Longitude = 76.9620,
-                Status = "Online"
-            }
-        };
 
-        foreach (var u in initialUsers)
-        {
-            _registeredUsers[u.UserId] = u;
-        }
 
-        // Real Highway Community Groups
-        var seedGroups = new List<Conversation>
-        {
-            new()
-            {
-                ConversationId = "grp_nh544",
-                IsGroup = true,
-                Title = "⚡ NH-544 Express EV Convoy",
-                Description = "Coimbatore - Tiruppur - Salem EV Commuters & Fast Charger availability alerts",
-                AvatarUrl = "https://images.unsplash.com/photo-1558441719-7d0840db04b9?auto=format&fit=crop&w=150&q=80",
-                ScopeRadiusKm = 100,
-                Category = "Convoy",
-                CreatedByUserId = 1,
-                ParticipantCount = 42,
-                LastMessage = "Bay 2 at Zeon Avinashi 60kW is free right now ⚡",
-                LastMessageTime = DateTime.UtcNow.AddMinutes(-5),
-                IsOnline = true
-            },
-            new()
-            {
-                ConversationId = "grp_sos_rescue",
-                IsGroup = true,
-                Title = "🔋 24/7 Battery SOS & Tow Network",
-                Description = "100km radius emergency backup: portable 15A chargers, jump-start & recovery team",
-                AvatarUrl = "https://images.unsplash.com/photo-1549399542-7e3f8b79c341?auto=format&fit=crop&w=150&q=80",
-                ScopeRadiusKm = 100,
-                Category = "Emergency",
-                CreatedByUserId = 1,
-                ParticipantCount = 128,
-                LastMessage = "Assistance en-route on NH544 bypass with portable unit",
-                LastMessageTime = DateTime.UtcNow.AddMinutes(-15),
-                IsOnline = true
-            },
-            new()
-            {
-                ConversationId = "direct_1_2",
-                IsGroup = false,
-                Title = "Dr. Sarah Thomas",
-                Description = "MG ZS EV • TN 37 EV 1990",
-                AvatarUrl = "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=150&q=80",
-                ScopeRadiusKm = 100,
-                Category = "Direct",
-                CreatedByUserId = 2,
-                ParticipantCount = 2,
-                LastMessage = "Hi! Are you near the Coimbatore fast charging station?",
-                LastMessageTime = DateTime.UtcNow.AddMinutes(-2),
-                IsOnline = true
-            }
-        };
+    private readonly IBigQueryService _bqService;
 
-        foreach (var g in seedGroups)
-        {
-            _memoryConversations[g.ConversationId] = g;
-            _memoryMessages[g.ConversationId] = new List<ChatMessage>
-            {
-                new()
-                {
-                    MessageId = $"msg_{g.ConversationId}_1",
-                    ConversationId = g.ConversationId,
-                    SenderUserId = g.CreatedByUserId ?? 1,
-                    SenderName = g.IsGroup ? "System" : g.Title,
-                    SenderAvatar = g.AvatarUrl ?? "https://lh3.googleusercontent.com/a/default-user",
-                    MessageText = g.LastMessage ?? "Welcome!",
-                    MessageType = "text",
-                    Status = "read",
-                    CreatedAt = g.LastMessageTime ?? DateTime.UtcNow
-                }
-            };
-        }
-    }
-
-    public ChatRepository(IDbConnectionFactory dbFactory)
+    public ChatRepository(IDbConnectionFactory dbFactory, IBigQueryService bqService)
     {
         _dbFactory = dbFactory;
+        _bqService = bqService;
     }
 
     public async Task<IEnumerable<Conversation>> GetConversationsAsync(long userId)
     {
+        if (_bqService.IsConfigured)
+        {
+            var bqConvs = await _bqService.GetConversationsAsync(userId);
+            if (bqConvs.Any()) return bqConvs;
+        }
+
         try
         {
             using var conn = _dbFactory.CreateConnection();
@@ -223,6 +74,12 @@ public class ChatRepository : IChatRepository
 
     public async Task<IEnumerable<ChatMessage>> GetMessagesAsync(string conversationId, int limit = 50)
     {
+        if (_bqService.IsConfigured)
+        {
+            var bqMsgs = await _bqService.GetMessagesAsync(conversationId, limit);
+            if (bqMsgs.Any()) return bqMsgs;
+        }
+
         try
         {
             using var conn = _dbFactory.CreateConnection();
@@ -267,6 +124,11 @@ public class ChatRepository : IChatRepository
     {
         message.MessageId ??= Guid.NewGuid().ToString("N");
         message.CreatedAt = DateTime.UtcNow;
+
+        if (_bqService.IsConfigured)
+        {
+            await _bqService.InsertChatMessageAsync(message);
+        }
 
         try
         {
@@ -330,6 +192,11 @@ public class ChatRepository : IChatRepository
             LastMessageTime = DateTime.UtcNow,
             IsOnline = true
         };
+
+        if (_bqService.IsConfigured)
+        {
+            await _bqService.InsertConversationAsync(conv);
+        }
 
         try
         {
@@ -469,6 +336,11 @@ public class ChatRepository : IChatRepository
 
     public async Task<bool> UpdateUserLocationAsync(long userId, double lat, double lng, bool isDiscoverable)
     {
+        if (_bqService.IsConfigured)
+        {
+            await _bqService.UpdateUserLocationAsync(userId, lat, lng, isDiscoverable);
+        }
+
         try
         {
             using var conn = _dbFactory.CreateConnection();
@@ -530,6 +402,12 @@ public class ChatRepository : IChatRepository
 
     public async Task<IEnumerable<NearbyUserDto>> GetNearbyUsersAsync(double myLat, double myLng, double radiusKm = 100)
     {
+        if (_bqService.IsConfigured)
+        {
+            var bqNearby = await _bqService.GetNearbyUsersAsync(myLat, myLng, radiusKm);
+            if (bqNearby.Any()) return bqNearby;
+        }
+
         var result = new List<NearbyUserDto>();
 
         try
@@ -617,6 +495,12 @@ public class ChatRepository : IChatRepository
 
     public async Task<IEnumerable<NearbyUserDto>> GetContactsAsync()
     {
+        if (_bqService.IsConfigured)
+        {
+            var bqContacts = await _bqService.GetContactsAsync();
+            if (bqContacts.Any()) return bqContacts;
+        }
+
         try
         {
             using var conn = _dbFactory.CreateConnection();

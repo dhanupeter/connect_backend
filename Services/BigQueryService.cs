@@ -140,6 +140,276 @@ public class BigQueryService : IBigQueryService
         }
     }
 
+    public async Task InsertConversationAsync(Conversation conv)
+    {
+        if (_client == null) return;
+        try
+        {
+            var row = new BigQueryInsertRow
+            {
+                ["conversation_id"] = conv.ConversationId,
+                ["is_group"] = conv.IsGroup,
+                ["title"] = conv.Title,
+                ["description"] = conv.Description ?? "",
+                ["avatar_url"] = conv.AvatarUrl ?? "",
+                ["scope_radius_km"] = conv.ScopeRadiusKm,
+                ["category"] = conv.Category ?? "General",
+                ["created_by_user_id"] = conv.CreatedByUserId ?? 0,
+                ["participant_count"] = conv.ParticipantCount > 0 ? conv.ParticipantCount : (conv.IsGroup ? 1 : 2),
+                ["created_at"] = (conv.CreatedAt == default ? DateTime.UtcNow : conv.CreatedAt).ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+                ["updated_at"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+            };
+
+            await _client.InsertRowAsync(DatasetId, "chat_conversations", row);
+            _logger.LogInformation("Conversation {ConversationId} inserted into BigQuery chat_conversations", conv.ConversationId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to insert conversation into BigQuery.");
+        }
+    }
+
+    public async Task<IEnumerable<Conversation>> GetConversationsAsync(long userId)
+    {
+        if (_client == null) return Enumerable.Empty<Conversation>();
+        try
+        {
+            var sql = $@"
+                SELECT 
+                    c.conversation_id,
+                    c.is_group,
+                    c.title,
+                    c.description,
+                    c.avatar_url,
+                    c.scope_radius_km,
+                    c.category,
+                    c.created_by_user_id,
+                    c.participant_count,
+                    c.created_at,
+                    c.updated_at,
+                    (SELECT message_text FROM `{ProjectId}.{DatasetId}.chat_messages` m WHERE m.conversation_id = c.conversation_id ORDER BY m.created_at DESC LIMIT 1) AS last_message,
+                    (SELECT created_at FROM `{ProjectId}.{DatasetId}.chat_messages` m WHERE m.conversation_id = c.conversation_id ORDER BY m.created_at DESC LIMIT 1) AS last_message_time
+                FROM `{ProjectId}.{DatasetId}.chat_conversations` c
+                ORDER BY c.updated_at DESC
+            ";
+
+            var results = await _client.ExecuteQueryAsync(sql, null);
+            var list = new List<Conversation>();
+
+            foreach (var r in results)
+            {
+                list.Add(new Conversation
+                {
+                    ConversationId = r["conversation_id"]?.ToString() ?? "",
+                    IsGroup = Convert.ToBoolean(r["is_group"]),
+                    Title = r["title"]?.ToString() ?? "",
+                    Description = r["description"]?.ToString(),
+                    AvatarUrl = r["avatar_url"]?.ToString(),
+                    ScopeRadiusKm = Convert.ToInt32(r["scope_radius_km"] ?? 100),
+                    Category = r["category"]?.ToString() ?? "General",
+                    CreatedByUserId = r["created_by_user_id"] != null ? Convert.ToInt64(r["created_by_user_id"]) : null,
+                    ParticipantCount = Convert.ToInt32(r["participant_count"] ?? 1),
+                    CreatedAt = r["created_at"] is DateTime dt ? dt : DateTime.UtcNow,
+                    UpdatedAt = r["updated_at"] is DateTime udt ? udt : DateTime.UtcNow,
+                    LastMessage = r["last_message"]?.ToString() ?? "Live connected",
+                    LastMessageTime = r["last_message_time"] is DateTime ldt ? ldt : DateTime.UtcNow,
+                    IsOnline = true
+                });
+            }
+
+            return list;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get conversations from BigQuery.");
+            return Enumerable.Empty<Conversation>();
+        }
+    }
+
+    public async Task<IEnumerable<ChatMessage>> GetMessagesAsync(string conversationId, int limit)
+    {
+        if (_client == null) return Enumerable.Empty<ChatMessage>();
+        try
+        {
+            var sql = $@"
+                SELECT 
+                    message_id,
+                    conversation_id,
+                    sender_user_id,
+                    sender_name,
+                    sender_avatar,
+                    message_text,
+                    message_type,
+                    attachment_url,
+                    file_name,
+                    file_size,
+                    metadata_json,
+                    status,
+                    created_at
+                FROM `{ProjectId}.{DatasetId}.chat_messages`
+                WHERE conversation_id = @conv_id
+                ORDER BY created_at ASC
+                LIMIT {Math.Clamp(limit, 1, 200)}
+            ";
+
+            var parameters = new[]
+            {
+                new BigQueryParameter("conv_id", BigQueryDbType.String, conversationId)
+            };
+
+            var results = await _client.ExecuteQueryAsync(sql, parameters);
+            var list = new List<ChatMessage>();
+
+            foreach (var r in results)
+            {
+                list.Add(new ChatMessage
+                {
+                    MessageId = r["message_id"]?.ToString() ?? "",
+                    ConversationId = r["conversation_id"]?.ToString() ?? "",
+                    SenderUserId = Convert.ToInt64(r["sender_user_id"] ?? 0),
+                    SenderName = r["sender_name"]?.ToString() ?? "Driver",
+                    SenderAvatar = r["sender_avatar"]?.ToString(),
+                    MessageText = r["message_text"]?.ToString() ?? "",
+                    MessageType = r["message_type"]?.ToString() ?? "text",
+                    AttachmentUrl = r["attachment_url"]?.ToString(),
+                    FileName = r["file_name"]?.ToString(),
+                    FileSize = r["file_size"] != null ? Convert.ToInt64(r["file_size"]) : null,
+                    MetadataJson = r["metadata_json"]?.ToString(),
+                    Status = r["status"]?.ToString() ?? "delivered",
+                    CreatedAt = r["created_at"] is DateTime dt ? dt : DateTime.UtcNow
+                });
+            }
+
+            return list;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get messages from BigQuery for conversation {ConvId}.", conversationId);
+            return Enumerable.Empty<ChatMessage>();
+        }
+    }
+
+    public async Task<IEnumerable<NearbyUserDto>> GetContactsAsync()
+    {
+        if (_client == null) return Enumerable.Empty<NearbyUserDto>();
+        try
+        {
+            var sql = $@"
+                SELECT 
+                    user_id,
+                    first_name,
+                    last_name,
+                    email,
+                    profile_image_url,
+                    latitude,
+                    longitude,
+                    status
+                FROM `{ProjectId}.{DatasetId}.identity_users`
+                ORDER BY user_id ASC
+            ";
+
+            var results = await _client.ExecuteQueryAsync(sql, null);
+            var list = new List<NearbyUserDto>();
+
+            foreach (var r in results)
+            {
+                var fName = r["first_name"]?.ToString() ?? "";
+                var lName = r["last_name"]?.ToString() ?? "";
+                var fullName = $"{fName} {lName}".Trim();
+                if (string.IsNullOrWhiteSpace(fullName)) fullName = "EV Driver";
+
+                list.Add(new NearbyUserDto
+                {
+                    UserId = Convert.ToInt64(r["user_id"] ?? 0),
+                    Name = fullName,
+                    Email = r["email"]?.ToString() ?? "",
+                    AvatarUrl = r["profile_image_url"]?.ToString() ?? "https://lh3.googleusercontent.com/a/default-user",
+                    CarModel = "Electric Vehicle",
+                    Plate = "TN EV " + (r["user_id"]?.ToString() ?? "100"),
+                    Soc = 85,
+                    Latitude = r["latitude"] != null ? Convert.ToDouble(r["latitude"]) : 11.0168,
+                    Longitude = r["longitude"] != null ? Convert.ToDouble(r["longitude"]) : 76.9558,
+                    DistanceKm = 0,
+                    Status = r["status"]?.ToString() ?? "Online"
+                });
+            }
+
+            return list;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get contacts from BigQuery.");
+            return Enumerable.Empty<NearbyUserDto>();
+        }
+    }
+
+    public async Task<IEnumerable<NearbyUserDto>> GetNearbyUsersAsync(double lat, double lng, double radiusKm)
+    {
+        var all = await GetContactsAsync();
+        var nearby = new List<NearbyUserDto>();
+
+        foreach (var u in all)
+        {
+            if (u.Latitude > 0 && u.Longitude > 0)
+            {
+                var dist = CalculateHaversine(lat, lng, u.Latitude, u.Longitude);
+                if (dist <= radiusKm)
+                {
+                    u.DistanceKm = Math.Round(dist, 1);
+                    nearby.Add(u);
+                }
+            }
+        }
+
+        return nearby.OrderBy(u => u.DistanceKm);
+    }
+
+    public async Task UpdateUserLocationAsync(long userId, double lat, double lng, bool isDiscoverable)
+    {
+        if (_client == null) return;
+        try
+        {
+            var sql = $@"
+                UPDATE `{ProjectId}.{DatasetId}.identity_users`
+                SET 
+                    latitude = @lat,
+                    longitude = @lng,
+                    last_login_at = CURRENT_TIMESTAMP(),
+                    updated_at = CURRENT_TIMESTAMP(),
+                    status = CASE WHEN @disc THEN 'ACTIVE' ELSE 'INACTIVE' END
+                WHERE user_id = @uid
+            ";
+
+            var parameters = new[]
+            {
+                new BigQueryParameter("lat", BigQueryDbType.Float64, lat),
+                new BigQueryParameter("lng", BigQueryDbType.Float64, lng),
+                new BigQueryParameter("disc", BigQueryDbType.Bool, isDiscoverable),
+                new BigQueryParameter("uid", BigQueryDbType.Int64, userId)
+            };
+
+            await _client.ExecuteQueryAsync(sql, parameters);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update user location in BigQuery.");
+        }
+    }
+
+    private static double CalculateHaversine(double lat1, double lon1, double lat2, double lon2)
+    {
+        const double R = 6371; // Earth radius in km
+        var dLat = ToRadians(lat2 - lat1);
+        var dLon = ToRadians(lon2 - lon1);
+        var a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2) +
+                Math.Cos(ToRadians(lat1)) * Math.Cos(ToRadians(lat2)) *
+                Math.Sin(dLon / 2) * Math.Sin(dLon / 2);
+        var c = 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
+        return R * c;
+    }
+
+    private static double ToRadians(double degrees) => degrees * Math.PI / 180.0;
+
     public async Task InsertTelemetryAsync(VehicleTelemetry telemetry)
     {
         if (_client == null) return;

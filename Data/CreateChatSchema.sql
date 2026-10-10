@@ -81,25 +81,3 @@ BEGIN
 END
 GO
 
--- 6. Seed default conversations if empty
-IF NOT EXISTS (SELECT TOP 1 1 FROM chat.Conversations)
-BEGIN
-    INSERT INTO chat.Conversations (ConversationId, IsGroup, Title, Description, AvatarUrl, ScopeRadiusKm, Category, CreatedAt)
-    VALUES 
-    ('grp_nh544', 1, N'⚡ NH-544 Express EV Convoy', N'Coimbatore - Tiruppur - Salem EV Commuters & Fast Charger availability alerts', 'https://images.unsplash.com/photo-1558441719-7d0840db04b9?auto=format&fit=crop&w=150&q=80', 50, 'Convoy', SYSUTCDATETIME()),
-    ('grp_sos_rescue', 1, N'🔋 24/7 Battery SOS & Tow Network', N'100km radius emergency backup: portable 15A chargers, jump-start & recovery team', 'https://images.unsplash.com/photo-1617788138017-80ad40651399?auto=format&fit=crop&w=150&q=80', 100, 'SOS', SYSUTCDATETIME()),
-    ('grp_weekend_riders', 1, N'🌿 Western Ghats EV Roadtrippers', N'Weekend hill climbs to Ooty, Valparai & Kodaikanal. Regen tips & hill chargers.', 'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?auto=format&fit=crop&w=150&q=80', 100, 'Roadtrip', SYSUTCDATETIME()),
-    ('chat_user_rajesh', 0, N'Rajesh Kannan', N'Tata Tiago EV • TN 38 BK 4210', 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80', 100, 'Direct', SYSUTCDATETIME()),
-    ('chat_user_sarah', 0, N'Dr. Sarah Thomas', N'MG ZS EV • TN 37 EV 1990', 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=150&q=80', 100, 'Direct', SYSUTCDATETIME());
-
-    -- Seed initial messages
-    INSERT INTO chat.Messages (MessageId, ConversationId, SenderUserId, SenderName, SenderAvatar, MessageText, MessageType, Status, CreatedAt)
-    VALUES
-    ('m1', 'grp_nh544', 2, N'Karthik EV', 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&w=150&q=80', N'Heavy traffic near Neelambur toll, watch your battery range if AC is running on full blast!', 'text', 'read', DATEADD(MINUTE, -45, SYSUTCDATETIME())),
-    ('m2', 'grp_nh544', 3, N'Vikramaditya', 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80', N'⚡ Station Alert: Zeon 60kW Avinashi Hub has 1 CCS2 gun free right now!', 'station', 'read', DATEADD(MINUTE, -20, SYSUTCDATETIME())),
-    ('m10', 'grp_sos_rescue', 99, N'Connect SOS Bot', 'https://images.unsplash.com/photo-1617788138017-80ad40651399?auto=format&fit=crop&w=150&q=80', N'🚨 100 KM Radius Emergency Support active. 14 fast-responders online within Coimbatore & surrounding highways.', 'sos', 'read', DATEADD(HOUR, -2, SYSUTCDATETIME())),
-    ('m20', 'chat_user_rajesh', 1, N'Rajesh Kannan', 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80', N'Hi Dhanu! Noticed you drive a Tata Nexon EV in Coimbatore area.', 'text', 'read', DATEADD(HOUR, -1, SYSUTCDATETIME())),
-    ('m21', 'chat_user_rajesh', 4, N'Dhanu Peter', 'https://lh3.googleusercontent.com/a/default-user', N'Yes! TN 38 EV 8903. Battery is at 84% currently.', 'text', 'read', DATEADD(MINUTE, -30, SYSUTCDATETIME())),
-    ('m22', 'chat_user_rajesh', 1, N'Rajesh Kannan', 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80', N'Hey Dhanu, are you charging at the Zeon hub tonight?', 'text', 'read', DATEADD(MINUTE, -10, SYSUTCDATETIME()));
-END
-GO
