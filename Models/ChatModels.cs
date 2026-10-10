@@ -105,6 +105,7 @@ public class NearbyUserDto
     public double Longitude { get; set; }
     public double DistanceKm { get; set; }
     public string Status { get; set; } = "Online";
+    public string StatusDescription { get; set; } = "⚡ Live EV Enthusiast";
     public string? CurrentStation { get; set; }
     public DateTime LastActiveAt { get; set; }
 }

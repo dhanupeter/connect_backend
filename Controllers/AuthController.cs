@@ -126,4 +126,44 @@ public class AuthController : ControllerBase
         _logger.LogInformation("User {Email} logged in successfully with UserId: {UserId}", email, savedUser.UserId);
         return Ok(response);
     }
+
+    [HttpPost("update-profile")]
+    public async Task<IActionResult> UpdateProfile([FromBody] UpdateProfileRequest request)
+    {
+        if (request.UserId <= 0) return BadRequest(new { error = "Valid UserId is required." });
+
+        var nameParts = (request.DisplayName ?? "EV Driver").Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        string fName = nameParts.Length > 0 ? nameParts[0] : "EV Driver";
+        string lName = nameParts.Length > 1 ? nameParts[1] : "";
+        string statusDesc = request.StatusDescription?.Replace("'", "''") ?? "⚡ Live EV Enthusiast & Highway Pioneer";
+
+        try
+        {
+            var sql = $@"
+                UPDATE `{_bqService.ProjectId}.{_bqService.DatasetId}.identity_users`
+                SET first_name = '{fName.Replace("'", "''")}',
+                    last_name = '{lName.Replace("'", "''")}',
+                    mobile_number = '{request.Phone?.Replace("'", "''") ?? ""}',
+                    status_description = '{statusDesc}',
+                    last_login_at = CURRENT_DATETIME()
+                WHERE user_id = {request.UserId};
+            ";
+            await _bqService.ExecuteQueryAsync(sql);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update profile in BigQuery");
+        }
+
+        return Ok(new { success = true, message = "Profile updated successfully in BigQuery." });
+    }
 }
+
+public record UpdateProfileRequest(
+    long UserId,
+    string? DisplayName,
+    string? Phone,
+    string? ProfileImageUrl,
+    string? StatusDescription
+);
+

@@ -15,19 +15,22 @@ public class ChatController : ControllerBase
     private readonly IWebHostEnvironment _env;
     private readonly ILogger<ChatController> _logger;
     private readonly ConnectBackend.Services.IPushService _push;
+    private readonly ConnectBackend.Services.IBigQueryService _bqService;
 
     public ChatController(
         IChatRepository chatRepo,
         IHubContext<ChatHub> hubContext,
         IWebHostEnvironment env,
         ILogger<ChatController> logger,
-        ConnectBackend.Services.IPushService push)
+        ConnectBackend.Services.IPushService push,
+        ConnectBackend.Services.IBigQueryService bqService)
     {
         _chatRepo = chatRepo;
         _hubContext = hubContext;
         _env = env;
         _logger = logger;
         _push = push;
+        _bqService = bqService;
     }
 
     [HttpGet("conversations")]
@@ -223,6 +226,57 @@ public class ChatController : ControllerBase
             return StatusCode(500, new { success = false, message = "File upload failed: " + ex.Message });
         }
     }
+
+    [HttpPost("preferences")]
+    public async Task<IActionResult> SetPreference([FromBody] ConversationPreferenceRequest req)
+    {
+        if (req.UserId <= 0 || string.IsNullOrWhiteSpace(req.ConversationId))
+        {
+            return BadRequest(new { success = false, message = "UserId and ConversationId are required." });
+        }
+
+        try
+        {
+            string safeCid = req.ConversationId.Replace("'", "''");
+            string mutedVal = req.IsMuted.HasValue ? (req.IsMuted.Value ? "TRUE" : "FALSE") : "T.is_muted";
+            string deletedVal = req.IsDeleted.HasValue ? (req.IsDeleted.Value ? "TRUE" : "FALSE") : "T.is_deleted";
+            string blockedVal = req.IsBlocked.HasValue ? (req.IsBlocked.Value ? "TRUE" : "FALSE") : "T.is_blocked";
+            string initMuted = req.IsMuted == true ? "TRUE" : "FALSE";
+            string initDeleted = req.IsDeleted == true ? "TRUE" : "FALSE";
+            string initBlocked = req.IsBlocked == true ? "TRUE" : "FALSE";
+
+            var sql = $@"
+                MERGE `event-506117.connectdb.user_preferences` T
+                USING (SELECT {req.UserId} AS user_id, '{safeCid}' AS conversation_id) S
+                ON T.user_id = S.user_id AND T.conversation_id = S.conversation_id
+                WHEN MATCHED THEN
+                    UPDATE SET 
+                        is_muted = COALESCE({mutedVal}, FALSE),
+                        is_deleted = COALESCE({deletedVal}, FALSE),
+                        is_blocked = COALESCE({blockedVal}, FALSE),
+                        updated_at = CURRENT_TIMESTAMP()
+                WHEN NOT MATCHED THEN
+                    INSERT (user_id, conversation_id, is_muted, is_deleted, is_blocked, updated_at)
+                    VALUES ({req.UserId}, '{safeCid}', {initMuted}, {initDeleted}, {initBlocked}, CURRENT_TIMESTAMP());
+            ";
+            await _bqService.ExecuteQueryAsync(sql);
+            return Ok(new { success = true, message = "Preferences saved successfully." });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to set conversation preference");
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+}
+
+public class ConversationPreferenceRequest
+{
+    public long UserId { get; set; }
+    public string ConversationId { get; set; } = string.Empty;
+    public bool? IsMuted { get; set; }
+    public bool? IsDeleted { get; set; }
+    public bool? IsBlocked { get; set; }
 }
 
 public class UpdateRoleRequest

@@ -229,7 +229,24 @@ public class BigQueryService : IBigQueryService
                 });
             }
 
-            list = list.Where(c => c.IsGroup).ToList();
+            // Groups: Only return groups the user belongs to or created, or public groups with active members
+            var memberGroupsSql = $@"
+                SELECT DISTINCT conversation_id FROM `{ProjectId}.{DatasetId}.chat_conversation_participants`
+                WHERE user_id = {userId}";
+            var memberGroupIds = new HashSet<string>();
+            try
+            {
+                var mgRows = await _client.ExecuteQueryAsync(memberGroupsSql, null);
+                foreach (var mr in mgRows)
+                {
+                    var gid = mr["conversation_id"]?.ToString();
+                    if (!string.IsNullOrEmpty(gid)) memberGroupIds.Add(gid);
+                }
+            }
+            catch { }
+
+            // Filter groups: show if user is participant, created it, or group has members
+            list = list.Where(c => c.IsGroup && (c.CreatedByUserId == userId || memberGroupIds.Contains(c.ConversationId) || c.ParticipantCount > 0)).ToList();
 
             // Direct chats: derived from messages (conversation id = chat_{minId}_{maxId})
             var dmSql = $@"
@@ -245,6 +262,27 @@ public class BigQueryService : IBigQueryService
             var dmRows = await _client.ExecuteQueryAsync(dmSql, null);
             var contacts = (await GetContactsAsync()).GroupBy(u => u.UserId).ToDictionary(g => g.Key, g => g.First());
 
+            // Check user preferences for muted / deleted / blocked
+            var prefsSql = $@"SELECT conversation_id, is_muted, is_deleted, is_blocked FROM `{ProjectId}.{DatasetId}.user_preferences` WHERE user_id = {userId}";
+            var prefMap = new Dictionary<string, (bool Muted, bool Deleted, bool Blocked)>();
+            try
+            {
+                var prefRows = await _client.ExecuteQueryAsync(prefsSql, null);
+                foreach (var pr in prefRows)
+                {
+                    var pcid = pr["conversation_id"]?.ToString() ?? "";
+                    if (!string.IsNullOrEmpty(pcid))
+                    {
+                        prefMap[pcid] = (
+                            Convert.ToBoolean(pr["is_muted"] ?? false),
+                            Convert.ToBoolean(pr["is_deleted"] ?? false),
+                            Convert.ToBoolean(pr["is_blocked"] ?? false)
+                        );
+                    }
+                }
+            }
+            catch { }
+
             foreach (var r in dmRows)
             {
                 var cid = r["conversation_id"]?.ToString() ?? "";
@@ -252,22 +290,28 @@ public class BigQueryService : IBigQueryService
                 if (parts.Length != 3 || !long.TryParse(parts[1], out var a) || !long.TryParse(parts[2], out var b)) continue;
                 if (a != userId && b != userId) continue;
                 var otherId = a == userId ? b : a;
-                contacts.TryGetValue(otherId, out var other);
+                if (!contacts.TryGetValue(otherId, out var other)) continue; // Only real registered users
+
+                if (prefMap.TryGetValue(cid, out var pref) && (pref.Deleted || pref.Blocked))
+                {
+                    continue; // Skipped because user deleted or blocked this conversation
+                }
+
                 var ts = r["created_at"] is DateTime dt2 ? dt2 : DateTime.UtcNow;
                 list.Add(new Conversation
                 {
                     ConversationId = cid,
                     IsGroup = false,
-                    Title = other?.Name ?? "EV Driver",
-                    AvatarUrl = other?.AvatarUrl ?? "https://lh3.googleusercontent.com/a/default-user",
+                    Title = other.Name,
+                    AvatarUrl = other.AvatarUrl ?? "https://lh3.googleusercontent.com/a/default-user",
                     OtherUserId = otherId,
                     ParticipantCount = 2,
-                    CarModel = other?.CarModel,
+                    CarModel = other.CarModel,
                     CreatedAt = ts,
                     UpdatedAt = ts,
                     LastMessage = r["message_text"]?.ToString(),
                     LastMessageTime = ts,
-                    IsOnline = true
+                    IsOnline = string.Equals(other.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase)
                 });
             }
 
@@ -358,6 +402,7 @@ public class BigQueryService : IBigQueryService
                     latitude,
                     longitude,
                     status,
+                    status_description,
                     last_login_at
                 FROM `{ProjectId}.{DatasetId}.identity_users`
                 ORDER BY user_id ASC
@@ -386,7 +431,8 @@ public class BigQueryService : IBigQueryService
                     Longitude = r["longitude"] != null ? Convert.ToDouble(r["longitude"]) : 0,
                     DistanceKm = 0,
                     LastActiveAt = r["last_login_at"] is DateTime lla ? DateTime.SpecifyKind(lla, DateTimeKind.Utc) : DateTime.MinValue,
-                    Status = r["status"]?.ToString() ?? "ACTIVE"
+                    Status = r["status"]?.ToString() ?? "ACTIVE",
+                    StatusDescription = r["status_description"]?.ToString() ?? "⚡ Live EV Enthusiast"
                 });
             }
 
