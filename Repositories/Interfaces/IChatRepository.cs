@@ -1,0 +1,12 @@
+using ConnectBackend.Models;
+
+namespace ConnectBackend.Repositories.Interfaces;
+
+public interface IChatRepository
+{
+    Task<IEnumerable<Conversation>> GetConversationsAsync(long userId);
+    Task<IEnumerable<ChatMessage>> GetMessagesAsync(string conversationId, int limit = 50);
+    Task<ChatMessage> SaveMessageAsync(ChatMessage message);
+    Task<Conversation> CreateGroupAsync(long creatorUserId, CreateGroupDto dto);
+    Task<IEnumerable<NearbyUserDto>> GetNearbyUsersAsync(double myLat, double myLng, double radiusKm = 100);
+}
