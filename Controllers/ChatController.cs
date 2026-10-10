@@ -14,17 +14,20 @@ public class ChatController : ControllerBase
     private readonly IHubContext<ChatHub> _hubContext;
     private readonly IWebHostEnvironment _env;
     private readonly ILogger<ChatController> _logger;
+    private readonly ConnectBackend.Services.IPushService _push;
 
     public ChatController(
         IChatRepository chatRepo,
         IHubContext<ChatHub> hubContext,
         IWebHostEnvironment env,
-        ILogger<ChatController> logger)
+        ILogger<ChatController> logger,
+        ConnectBackend.Services.IPushService push)
     {
         _chatRepo = chatRepo;
         _hubContext = hubContext;
         _env = env;
         _logger = logger;
+        _push = push;
     }
 
     [HttpGet("conversations")]
@@ -70,6 +73,22 @@ public class ChatController : ControllerBase
 
         // Broadcast in real-time via SignalR
         await _hubContext.Clients.Group(dto.ConversationId).SendAsync("ReceiveMessage", saved);
+
+        // Push notification to the other person in a direct chat (id = chat_{a}_{b})
+        var idParts = dto.ConversationId.Split('_');
+        if (idParts.Length == 3 && idParts[0] == "chat" &&
+            long.TryParse(idParts[1], out var ua) && long.TryParse(idParts[2], out var ub))
+        {
+            var receiverId = ua == userId ? ub : ua;
+            var preview = string.IsNullOrWhiteSpace(dto.MessageText) ? "Sent an attachment" : dto.MessageText;
+            _ = _push.SendToUserAsync(receiverId, userName, preview, new Dictionary<string, string>
+            {
+                ["type"] = "chat",
+                ["conversationId"] = dto.ConversationId,
+                ["senderId"] = userId.ToString(),
+                ["senderName"] = userName
+            });
+        }
 
         return Ok(new { success = true, data = saved });
     }

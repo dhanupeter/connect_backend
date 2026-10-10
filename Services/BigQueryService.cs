@@ -229,7 +229,49 @@ public class BigQueryService : IBigQueryService
                 });
             }
 
-            return list;
+            list = list.Where(c => c.IsGroup).ToList();
+
+            // Direct chats: derived from messages (conversation id = chat_{minId}_{maxId})
+            var dmSql = $@"
+                SELECT conversation_id, message_text, created_at
+                FROM (
+                    SELECT conversation_id, message_text, created_at,
+                        ROW_NUMBER() OVER(PARTITION BY conversation_id ORDER BY created_at DESC) AS rn
+                    FROM `{ProjectId}.{DatasetId}.chat_messages`
+                    WHERE STARTS_WITH(conversation_id, 'chat_')
+                )
+                WHERE rn = 1
+                ORDER BY created_at DESC";
+            var dmRows = await _client.ExecuteQueryAsync(dmSql, null);
+            var contacts = (await GetContactsAsync()).GroupBy(u => u.UserId).ToDictionary(g => g.Key, g => g.First());
+
+            foreach (var r in dmRows)
+            {
+                var cid = r["conversation_id"]?.ToString() ?? "";
+                var parts = cid.Split('_');
+                if (parts.Length != 3 || !long.TryParse(parts[1], out var a) || !long.TryParse(parts[2], out var b)) continue;
+                if (a != userId && b != userId) continue;
+                var otherId = a == userId ? b : a;
+                contacts.TryGetValue(otherId, out var other);
+                var ts = r["created_at"] is DateTime dt2 ? dt2 : DateTime.UtcNow;
+                list.Add(new Conversation
+                {
+                    ConversationId = cid,
+                    IsGroup = false,
+                    Title = other?.Name ?? "EV Driver",
+                    AvatarUrl = other?.AvatarUrl ?? "https://lh3.googleusercontent.com/a/default-user",
+                    OtherUserId = otherId,
+                    ParticipantCount = 2,
+                    CarModel = other?.CarModel,
+                    CreatedAt = ts,
+                    UpdatedAt = ts,
+                    LastMessage = r["message_text"]?.ToString(),
+                    LastMessageTime = ts,
+                    IsOnline = true
+                });
+            }
+
+            return list.OrderByDescending(c => c.LastMessageTime ?? c.UpdatedAt).ToList();
         }
         catch (Exception ex)
         {
@@ -315,7 +357,8 @@ public class BigQueryService : IBigQueryService
                     profile_image_url,
                     latitude,
                     longitude,
-                    status
+                    status,
+                    last_login_at
                 FROM `{ProjectId}.{DatasetId}.identity_users`
                 ORDER BY user_id ASC
             ";
@@ -339,10 +382,11 @@ public class BigQueryService : IBigQueryService
                     CarModel = "Electric Vehicle",
                     Plate = "TN EV " + (r["user_id"]?.ToString() ?? "100"),
                     Soc = 85,
-                    Latitude = r["latitude"] != null ? Convert.ToDouble(r["latitude"]) : 11.0168,
-                    Longitude = r["longitude"] != null ? Convert.ToDouble(r["longitude"]) : 76.9558,
+                    Latitude = r["latitude"] != null ? Convert.ToDouble(r["latitude"]) : 0,
+                    Longitude = r["longitude"] != null ? Convert.ToDouble(r["longitude"]) : 0,
                     DistanceKm = 0,
-                    Status = r["status"]?.ToString() ?? "Online"
+                    LastActiveAt = r["last_login_at"] is DateTime lla ? DateTime.SpecifyKind(lla, DateTimeKind.Utc) : DateTime.MinValue,
+                    Status = r["status"]?.ToString() ?? "ACTIVE"
                 });
             }
 
@@ -359,21 +403,49 @@ public class BigQueryService : IBigQueryService
     {
         var all = await GetContactsAsync();
         var nearby = new List<NearbyUserDto>();
+        var cutoff = DateTime.UtcNow.AddMinutes(-30);
 
         foreach (var u in all)
         {
-            if (u.Latitude > 0 && u.Longitude > 0)
+            // Skip users who turned location sharing off or have no recent live location
+            if (!string.Equals(u.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase)) continue;
+            if (u.LastActiveAt < cutoff) continue;
+
+            if (u.Latitude != 0 && u.Longitude != 0)
             {
                 var dist = CalculateHaversine(lat, lng, u.Latitude, u.Longitude);
                 if (dist <= radiusKm)
                 {
                     u.DistanceKm = Math.Round(dist, 1);
+                    u.Status = "Online";
                     nearby.Add(u);
                 }
             }
         }
 
         return nearby.OrderBy(u => u.DistanceKm);
+    }
+
+    public async Task SetDiscoverableAsync(long userId, bool isDiscoverable)
+    {
+        if (_client == null) return;
+        try
+        {
+            var sql = $@"
+                UPDATE `{ProjectId}.{DatasetId}.identity_users`
+                SET status = CASE WHEN @disc THEN 'ACTIVE' ELSE 'INACTIVE' END,
+                    updated_at = CURRENT_TIMESTAMP()
+                WHERE user_id = @uid";
+            await _client.ExecuteQueryAsync(sql, new[]
+            {
+                new BigQueryParameter("disc", BigQueryDbType.Bool, isDiscoverable),
+                new BigQueryParameter("uid", BigQueryDbType.Int64, userId)
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to set discoverable flag in BigQuery.");
+        }
     }
 
     public async Task UpdateUserLocationAsync(long userId, double lat, double lng, bool isDiscoverable)
@@ -603,6 +675,78 @@ public class BigQueryService : IBigQueryService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to upsert vehicle {VehicleId} to BigQuery.", vehicle.VehicleId);
+        }
+    }
+
+    private bool _devicesTableReady;
+
+    private async Task EnsureDevicesTableAsync()
+    {
+        if (_client == null || _devicesTableReady) return;
+        await _client.ExecuteQueryAsync($@"
+            CREATE TABLE IF NOT EXISTS `{ProjectId}.{DatasetId}.user_devices` (
+                user_id INT64,
+                device_id STRING,
+                fcm_token STRING,
+                platform STRING,
+                manufacturer STRING,
+                model STRING,
+                os_version STRING,
+                app_version STRING,
+                created_at TIMESTAMP,
+                last_seen_at TIMESTAMP
+            )", null);
+        _devicesTableReady = true;
+    }
+
+    public async Task RegisterDeviceAsync(DeviceInfoDto d)
+    {
+        if (_client == null) return;
+        try
+        {
+            await EnsureDevicesTableAsync();
+            var sql = $@"
+                MERGE `{ProjectId}.{DatasetId}.user_devices` T
+                USING (SELECT @uid AS user_id, @did AS device_id) S
+                ON T.user_id = S.user_id AND T.device_id = S.device_id
+                WHEN MATCHED THEN UPDATE SET fcm_token = @tok, platform = @plat, manufacturer = @man,
+                    model = @mod, os_version = @os, app_version = @app, last_seen_at = CURRENT_TIMESTAMP()
+                WHEN NOT MATCHED THEN INSERT (user_id, device_id, fcm_token, platform, manufacturer, model, os_version, app_version, created_at, last_seen_at)
+                    VALUES (@uid, @did, @tok, @plat, @man, @mod, @os, @app, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())";
+            await _client.ExecuteQueryAsync(sql, new[]
+            {
+                new BigQueryParameter("uid", BigQueryDbType.Int64, d.UserId),
+                new BigQueryParameter("did", BigQueryDbType.String, d.DeviceId ?? ""),
+                new BigQueryParameter("tok", BigQueryDbType.String, d.FcmToken ?? ""),
+                new BigQueryParameter("plat", BigQueryDbType.String, d.Platform ?? ""),
+                new BigQueryParameter("man", BigQueryDbType.String, d.Manufacturer ?? ""),
+                new BigQueryParameter("mod", BigQueryDbType.String, d.Model ?? ""),
+                new BigQueryParameter("os", BigQueryDbType.String, d.OsVersion ?? ""),
+                new BigQueryParameter("app", BigQueryDbType.String, d.AppVersion ?? "")
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to register device in BigQuery.");
+        }
+    }
+
+    public async Task<IEnumerable<string>> GetDeviceTokensAsync(long userId)
+    {
+        if (_client == null) return Enumerable.Empty<string>();
+        try
+        {
+            await EnsureDevicesTableAsync();
+            var rows = await _client.ExecuteQueryAsync($@"
+                SELECT DISTINCT fcm_token FROM `{ProjectId}.{DatasetId}.user_devices`
+                WHERE user_id = @uid AND fcm_token IS NOT NULL AND fcm_token != ''",
+                new[] { new BigQueryParameter("uid", BigQueryDbType.Int64, userId) });
+            return rows.Select(r => r["fcm_token"]?.ToString() ?? "").Where(t => t != "").ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to read device tokens.");
+            return Enumerable.Empty<string>();
         }
     }
 

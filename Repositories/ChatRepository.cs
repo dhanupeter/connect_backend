@@ -384,6 +384,11 @@ public class ChatRepository : IChatRepository
 
     public async Task<bool> SetLocationSharingAsync(long userId, bool isDiscoverable)
     {
+        if (_bqService.IsConfigured)
+        {
+            await _bqService.SetDiscoverableAsync(userId, isDiscoverable);
+        }
+
         try
         {
             using var conn = _dbFactory.CreateConnection();
@@ -404,8 +409,7 @@ public class ChatRepository : IChatRepository
     {
         if (_bqService.IsConfigured)
         {
-            var bqNearby = await _bqService.GetNearbyUsersAsync(myLat, myLng, radiusKm);
-            if (bqNearby.Any()) return bqNearby;
+            return await _bqService.GetNearbyUsersAsync(myLat, myLng, radiusKm);
         }
 
         var result = new List<NearbyUserDto>();

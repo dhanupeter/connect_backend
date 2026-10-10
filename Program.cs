@@ -64,6 +64,7 @@ builder.Services.AddScoped<IMasterDataRepository, MasterDataRepository>();
 builder.Services.AddScoped<IChatRepository, ChatRepository>();
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
 builder.Services.AddSingleton<IBigQueryService, BigQueryService>();
+builder.Services.AddSingleton<IPushService, PushService>();
 
 // Real-time WebSockets & SignalR
 builder.Services.AddSignalR();

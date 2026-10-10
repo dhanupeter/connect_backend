@@ -87,10 +87,13 @@ public class CallController : ControllerBase
     private readonly IDbConnectionFactory _dbFactory;
     private readonly ILogger<CallController> _logger;
 
-    public CallController(IDbConnectionFactory dbFactory, ILogger<CallController> logger)
+    private readonly ConnectBackend.Services.IPushService _push;
+
+    public CallController(IDbConnectionFactory dbFactory, ILogger<CallController> logger, ConnectBackend.Services.IPushService push)
     {
         _dbFactory = dbFactory;
         _logger = logger;
+        _push = push;
     }
 
     [HttpPost("invite")]
@@ -141,6 +144,20 @@ public class CallController : ControllerBase
             StartedAt = session.CreatedAt
         };
         _callHistory[session.CallId] = log;
+
+        _ = _push.SendToUserAsync(
+            session.CalleeId,
+            $"Incoming {(session.CallType == "video" ? "video" : "voice")} call",
+            $"{session.CallerName} is calling you",
+            new Dictionary<string, string>
+            {
+                ["type"] = "call",
+                ["callId"] = session.CallId,
+                ["callType"] = session.CallType,
+                ["callerId"] = session.CallerId.ToString(),
+                ["callerName"] = session.CallerName
+            },
+            highPriority: true);
 
         await PersistCallLogAsync(log);
 

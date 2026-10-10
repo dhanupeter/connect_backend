@@ -23,6 +23,7 @@ public class Conversation
     public string? Plate { get; set; }
     public int? Soc { get; set; }
     public bool IsOnline { get; set; } = true;
+    public long? OtherUserId { get; set; }
     public List<GroupMemberDto> Members { get; set; } = new();
 }
 

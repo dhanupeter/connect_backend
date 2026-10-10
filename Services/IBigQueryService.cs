@@ -22,5 +22,8 @@ public interface IBigQueryService
     Task InsertReservationAsync(ChargingReservation res);
     Task InsertOrUpdateUserAsync(User user);
     Task InsertOrUpdateVehicleAsync(Vehicle vehicle);
+    Task SetDiscoverableAsync(long userId, bool isDiscoverable);
+    Task RegisterDeviceAsync(DeviceInfoDto device);
+    Task<IEnumerable<string>> GetDeviceTokensAsync(long userId);
 }
 
