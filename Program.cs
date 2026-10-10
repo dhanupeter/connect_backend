@@ -78,7 +78,7 @@ app.UseSwagger();
 app.UseSwaggerUI(c =>
 {
     c.SwaggerEndpoint("/swagger/v1/swagger.json", "Connect EV API v1");
-    c.RoutePrefix = "swagger"; // Accessible at http://localhost:5000/swagger
+    c.RoutePrefix = "swagger";
     c.DocumentTitle = "Connect EV - Enterprise API & Swagger Documentation";
 });
 

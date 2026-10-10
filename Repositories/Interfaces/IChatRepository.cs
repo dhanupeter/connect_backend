@@ -13,4 +13,7 @@ public interface IChatRepository
     Task<bool> RemoveMemberAsync(string conversationId, long userId);
     Task<bool> AddMemberAsync(string conversationId, long userId, bool isAdmin);
     Task<IEnumerable<NearbyUserDto>> GetNearbyUsersAsync(double myLat, double myLng, double radiusKm = 100);
+    Task<bool> UpdateUserLocationAsync(long userId, double lat, double lng, bool isDiscoverable);
+    Task<bool> SetLocationSharingAsync(long userId, bool isDiscoverable);
+    Task<IEnumerable<NearbyUserDto>> GetContactsAsync();
 }

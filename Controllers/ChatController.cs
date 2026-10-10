@@ -122,6 +122,27 @@ public class ChatController : ControllerBase
         return Ok(new { success = true, userId = req.UserId });
     }
 
+    [HttpGet("contacts")]
+    public async Task<IActionResult> GetContacts()
+    {
+        var contacts = await _chatRepo.GetContactsAsync();
+        return Ok(new { success = true, count = contacts.Count(), data = contacts });
+    }
+
+    [HttpPost("location")]
+    public async Task<IActionResult> UpdateLocation([FromBody] UpdateLocationRequest req)
+    {
+        var success = await _chatRepo.UpdateUserLocationAsync(req.UserId, req.Latitude, req.Longitude, req.IsDiscoverable);
+        return Ok(new { success = true, message = "Location updated successfully." });
+    }
+
+    [HttpPost("location-sharing")]
+    public async Task<IActionResult> SetLocationSharing([FromBody] LocationSharingRequest req)
+    {
+        var success = await _chatRepo.SetLocationSharingAsync(req.UserId, req.IsDiscoverable);
+        return Ok(new { success = true, isDiscoverable = req.IsDiscoverable });
+    }
+
     [HttpGet("nearby")]
     public async Task<IActionResult> GetNearby(
         [FromQuery] double lat = 11.0168,
@@ -195,3 +216,18 @@ public class AddMemberRequest
     public long UserId { get; set; }
     public bool IsAdmin { get; set; }
 }
+
+public class UpdateLocationRequest
+{
+    public long UserId { get; set; }
+    public double Latitude { get; set; }
+    public double Longitude { get; set; }
+    public bool IsDiscoverable { get; set; } = true;
+}
+
+public class LocationSharingRequest
+{
+    public long UserId { get; set; }
+    public bool IsDiscoverable { get; set; }
+}
+

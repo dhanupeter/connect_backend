@@ -17,21 +17,18 @@ public class SqlConnectionFactory : IDbConnectionFactory
 
     public SqlConnectionFactory(IConfiguration configuration)
     {
-        var configured = configuration.GetConnectionString("ConnectEV");
+        var configured = configuration.GetConnectionString("ConnectEV")
+            ?? Environment.GetEnvironmentVariable("CONNECTEV_CONNECTION_STRING")
+            ?? Environment.GetEnvironmentVariable("SQL_CONNECTION_STRING");
+
         if (!string.IsNullOrWhiteSpace(configured) && !configured.Contains("localhost"))
         {
             _connectionString = configured;
             _canConnect = true;
         }
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            // Running locally on Windows machine with SQL Express
-            _connectionString = configured ?? "Server=localhost\\SQLEXPRESS;Database=ConnectEV;Integrated Security=True;TrustServerCertificate=True;Connection Timeout=3;";
-            _canConnect = true;
-        }
         else
         {
-            // Running inside Linux Docker container on cloud (Render) without an external SQL Server
+            // Real cloud container mode
             _connectionString = string.Empty;
             _canConnect = false;
         }
