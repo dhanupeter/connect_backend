@@ -80,22 +80,19 @@ public class AuthController : ControllerBase
             vehicle = await _vehicleRepository.UpsertVehicleAsync(vehicle);
         }
 
-        // Stream user profile & vehicle directly to BigQuery connectdb in background
-        _ = Task.Run(async () =>
+        // Persist user profile & vehicle directly to BigQuery connectdb synchronously
+        try
         {
-            try
+            await _bqService.InsertOrUpdateUserAsync(savedUser);
+            if (vehicle != null)
             {
-                await _bqService.InsertOrUpdateUserAsync(savedUser);
-                if (vehicle != null)
-                {
-                    await _bqService.InsertOrUpdateVehicleAsync(vehicle);
-                }
+                await _bqService.InsertOrUpdateVehicleAsync(vehicle);
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Background BigQuery sync error for user {UserId}", savedUser.UserId);
-            }
-        });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "BigQuery sync error for user {UserId}", savedUser.UserId);
+        }
 
         string jwtToken = _jwtTokenService.GenerateToken(savedUser);
 
