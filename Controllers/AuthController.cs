@@ -47,8 +47,8 @@ public class AuthController : ControllerBase
 
         // Parse first & last name
         var nameParts = fullName.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
-        string firstName = nameParts.Length > 0 ? nameParts[0] : "EV";
-        string lastName = nameParts.Length > 1 ? nameParts[1] : "Driver";
+        string firstName = nameParts.Length > 0 ? nameParts[0] : (string.IsNullOrWhiteSpace(fullName) ? "EV Driver" : fullName);
+        string lastName = nameParts.Length > 1 ? nameParts[1] : "";
 
         var userToSave = new User
         {
