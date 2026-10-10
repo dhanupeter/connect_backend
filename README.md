@@ -15,7 +15,7 @@ Enterprise backend for **ConnectEV** platform supporting smart charging, telemet
   * Real-time Battery SOS emergency broadcasting.
 * **Smart Charging Management**: Stations, connectors, tariffs, hold reservations (15-min hold window).
 * **Vehicle & VAHAN Verification**: Telemetry tracking (SOC %, temperature, charging kW power, speed).
-* **Swagger UI API Documentation**: Available at `http://localhost:5000/swagger`.
+* **Swagger UI API Documentation**: Available at `https://connect-backend-zao7.onrender.com/swagger`.
 
 ---
 
@@ -23,7 +23,7 @@ Enterprise backend for **ConnectEV** platform supporting smart charging, telemet
 * **Framework**: .NET Core 10.0 (C#)
 * **Real-time WebSockets**: ASP.NET Core SignalR
 * **Data Access**: Dapper + Microsoft.Data.SqlClient
-* **Database**: Microsoft SQL Server (`ConnectEV` database)
+* **Database**: Microsoft SQL Server / Cloud BigQuery (`event-506117.connectdb`)
 * **Authentication**: JWT Bearer + Firebase Auth Integration
 * **API Documentation**: Swagger / OpenAPI (Swashbuckle)
 
@@ -39,6 +39,6 @@ Run the SQL migration scripts located in the `Data/` folder using SQL Server Man
 ```bash
 dotnet restore
 dotnet build
-dotnet run --urls "http://0.0.0.0:5000"
+dotnet run
 ```
-Swagger UI will be accessible at: `http://localhost:5000/swagger`
+Swagger UI is accessible at: `https://connect-backend-zao7.onrender.com/swagger`

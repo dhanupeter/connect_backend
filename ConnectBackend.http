@@ -1,4 +1,4 @@
-@ConnectBackend_HostAddress = http://localhost:5058
+@ConnectBackend_HostAddress = https://connect-backend-zao7.onrender.com
 
 GET {{ConnectBackend_HostAddress}}/weatherforecast/
 Accept: application/json
