@@ -13,17 +13,20 @@ public class AuthController : ControllerBase
     private readonly IUserRepository _userRepository;
     private readonly IVehicleRepository _vehicleRepository;
     private readonly IJwtTokenService _jwtTokenService;
+    private readonly IBigQueryService _bqService;
     private readonly ILogger<AuthController> _logger;
 
     public AuthController(
         IUserRepository userRepository,
         IVehicleRepository vehicleRepository,
         IJwtTokenService jwtTokenService,
+        IBigQueryService bqService,
         ILogger<AuthController> logger)
     {
         _userRepository = userRepository;
         _vehicleRepository = vehicleRepository;
         _jwtTokenService = jwtTokenService;
+        _bqService = bqService;
         _logger = logger;
     }
 
@@ -76,6 +79,23 @@ public class AuthController : ControllerBase
             };
             vehicle = await _vehicleRepository.UpsertVehicleAsync(vehicle);
         }
+
+        // Stream user profile & vehicle directly to BigQuery connectdb in background
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _bqService.InsertOrUpdateUserAsync(savedUser);
+                if (vehicle != null)
+                {
+                    await _bqService.InsertOrUpdateVehicleAsync(vehicle);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Background BigQuery sync error for user {UserId}", savedUser.UserId);
+            }
+        });
 
         string jwtToken = _jwtTokenService.GenerateToken(savedUser);
 

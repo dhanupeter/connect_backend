@@ -14,4 +14,6 @@ public interface IBigQueryService
     Task InsertChatMessageAsync(ChatMessage message);
     Task InsertTelemetryAsync(VehicleTelemetry telemetry);
     Task InsertReservationAsync(ChargingReservation res);
+    Task InsertOrUpdateUserAsync(User user);
+    Task InsertOrUpdateVehicleAsync(Vehicle vehicle);
 }

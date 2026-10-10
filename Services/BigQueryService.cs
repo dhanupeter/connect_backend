@@ -195,4 +195,70 @@ public class BigQueryService : IBigQueryService
             _logger.LogError(ex, "Failed to stream charging reservation to BigQuery.");
         }
     }
+
+    public async Task InsertOrUpdateUserAsync(User user)
+    {
+        if (_client == null) return;
+        try
+        {
+            var row = new BigQueryInsertRow
+            {
+                ["user_id"] = user.UserId,
+                ["firebase_uid"] = user.FirebaseUid ?? "",
+                ["user_code"] = user.UserCode ?? ("USR-" + Guid.NewGuid().ToString("N")[..8].ToUpper()),
+                ["first_name"] = user.FirstName ?? "EV",
+                ["last_name"] = user.LastName ?? "Driver",
+                ["email"] = user.Email ?? "",
+                ["mobile_number"] = user.MobileNumber ?? "+91 98765 43210",
+                ["profile_image_url"] = user.ProfileImageUrl ?? "",
+                ["status"] = user.Status ?? "ACTIVE",
+                ["is_email_verified"] = user.IsEmailVerified,
+                ["is_mobile_verified"] = user.IsMobileVerified,
+                ["latitude"] = 11.0168,
+                ["longitude"] = 76.9558,
+                ["last_login_at"] = (user.LastLoginAt ?? DateTime.UtcNow).ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+                ["created_at"] = (user.CreatedAt == default ? DateTime.UtcNow : user.CreatedAt).ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+                ["updated_at"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+            };
+
+            await _client.InsertRowAsync(DatasetId, "identity_users", row);
+            _logger.LogInformation("Driver {UserId} ({Email}) logged in and saved to BigQuery identity_users!", user.UserId, user.Email);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to stream user {UserId} to BigQuery.", user.UserId);
+        }
+    }
+
+    public async Task InsertOrUpdateVehicleAsync(Vehicle vehicle)
+    {
+        if (_client == null) return;
+        try
+        {
+            var row = new BigQueryInsertRow
+            {
+                ["vehicle_id"] = vehicle.VehicleId,
+                ["user_id"] = vehicle.UserId,
+                ["vehicle_code"] = vehicle.VehicleCode ?? ("VEH-" + Guid.NewGuid().ToString("N")[..8].ToUpper()),
+                ["registration_number"] = vehicle.RegistrationNumber ?? "TN 38 EV 8899",
+                ["vin"] = vehicle.VIN ?? ("MAT" + Guid.NewGuid().ToString("N")[..14].ToUpper()),
+                ["manufacturer_id"] = vehicle.ManufacturerId > 0 ? vehicle.ManufacturerId : 1,
+                ["model_id"] = vehicle.ModelId > 0 ? vehicle.ModelId : 1,
+                ["variant_id"] = vehicle.VariantId ?? 1,
+                ["color"] = vehicle.Color ?? "Teal Blue",
+                ["is_electric"] = vehicle.IsElectric,
+                ["status"] = vehicle.Status ?? "ACTIVE",
+                ["created_at"] = (vehicle.CreatedAt == default ? DateTime.UtcNow : vehicle.CreatedAt).ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+                ["updated_at"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+            };
+
+            await _client.InsertRowAsync(DatasetId, "vehicle_vehicles", row);
+            _logger.LogInformation("Vehicle {VehicleId} ({Plate}) saved to BigQuery vehicle_vehicles!", vehicle.VehicleId, vehicle.RegistrationNumber);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to stream vehicle {VehicleId} to BigQuery.", vehicle.VehicleId);
+        }
+    }
 }
+
