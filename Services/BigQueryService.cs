@@ -201,32 +201,63 @@ public class BigQueryService : IBigQueryService
         if (_client == null) return;
         try
         {
-            var row = new BigQueryInsertRow
+            var mergeSql = $@"
+                MERGE `{ProjectId}.{DatasetId}.identity_users` T
+                USING (
+                  SELECT 
+                    @user_id AS user_id,
+                    @firebase_uid AS firebase_uid,
+                    @user_code AS user_code,
+                    @first_name AS first_name,
+                    @last_name AS last_name,
+                    @email AS email,
+                    @mobile_number AS mobile_number,
+                    @profile_image_url AS profile_image_url,
+                    @status AS status,
+                    @is_email_verified AS is_email_verified,
+                    @is_mobile_verified AS is_mobile_verified,
+                    @latitude AS latitude,
+                    @longitude AS longitude
+                ) S
+                ON (T.email IS NOT NULL AND LOWER(T.email) = LOWER(S.email))
+                   OR (T.firebase_uid IS NOT NULL AND T.firebase_uid = S.firebase_uid AND S.firebase_uid != '')
+                WHEN MATCHED THEN
+                  UPDATE SET 
+                    last_login_at = CURRENT_TIMESTAMP(),
+                    updated_at = CURRENT_TIMESTAMP(),
+                    visit_count = COALESCE(T.visit_count, 1) + 1,
+                    first_name = COALESCE(S.first_name, T.first_name),
+                    last_name = COALESCE(S.last_name, T.last_name),
+                    profile_image_url = COALESCE(S.profile_image_url, T.profile_image_url),
+                    status = 'ACTIVE'
+                WHEN NOT MATCHED THEN
+                  INSERT (user_id, firebase_uid, user_code, first_name, last_name, email, mobile_number, profile_image_url, status, is_email_verified, is_mobile_verified, latitude, longitude, last_login_at, created_at, updated_at, visit_count)
+                  VALUES (S.user_id, S.firebase_uid, S.user_code, S.first_name, S.last_name, S.email, S.mobile_number, S.profile_image_url, S.status, S.is_email_verified, S.is_mobile_verified, S.latitude, S.longitude, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), 1);
+            ";
+
+            var parameters = new[]
             {
-                ["user_id"] = user.UserId,
-                ["firebase_uid"] = user.FirebaseUid ?? "",
-                ["user_code"] = user.UserCode ?? ("USR-" + Guid.NewGuid().ToString("N")[..8].ToUpper()),
-                ["first_name"] = user.FirstName ?? "EV",
-                ["last_name"] = user.LastName ?? "Driver",
-                ["email"] = user.Email ?? "",
-                ["mobile_number"] = user.MobileNumber ?? "+91 98765 43210",
-                ["profile_image_url"] = user.ProfileImageUrl ?? "",
-                ["status"] = user.Status ?? "ACTIVE",
-                ["is_email_verified"] = user.IsEmailVerified,
-                ["is_mobile_verified"] = user.IsMobileVerified,
-                ["latitude"] = 11.0168,
-                ["longitude"] = 76.9558,
-                ["last_login_at"] = (user.LastLoginAt ?? DateTime.UtcNow).ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
-                ["created_at"] = (user.CreatedAt == default ? DateTime.UtcNow : user.CreatedAt).ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
-                ["updated_at"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+                new BigQueryParameter("user_id", BigQueryDbType.Int64, user.UserId),
+                new BigQueryParameter("firebase_uid", BigQueryDbType.String, user.FirebaseUid ?? ""),
+                new BigQueryParameter("user_code", BigQueryDbType.String, user.UserCode ?? ("USR-" + Guid.NewGuid().ToString("N")[..8].ToUpper())),
+                new BigQueryParameter("first_name", BigQueryDbType.String, user.FirstName ?? "EV"),
+                new BigQueryParameter("last_name", BigQueryDbType.String, user.LastName ?? "Driver"),
+                new BigQueryParameter("email", BigQueryDbType.String, user.Email ?? ""),
+                new BigQueryParameter("mobile_number", BigQueryDbType.String, user.MobileNumber ?? "+91 98765 43210"),
+                new BigQueryParameter("profile_image_url", BigQueryDbType.String, user.ProfileImageUrl ?? ""),
+                new BigQueryParameter("status", BigQueryDbType.String, user.Status ?? "ACTIVE"),
+                new BigQueryParameter("is_email_verified", BigQueryDbType.Bool, user.IsEmailVerified),
+                new BigQueryParameter("is_mobile_verified", BigQueryDbType.Bool, user.IsMobileVerified),
+                new BigQueryParameter("latitude", BigQueryDbType.Float64, 11.0168),
+                new BigQueryParameter("longitude", BigQueryDbType.Float64, 76.9558),
             };
 
-            await _client.InsertRowAsync(DatasetId, "identity_users", row);
-            _logger.LogInformation("Driver {UserId} ({Email}) logged in and saved to BigQuery identity_users!", user.UserId, user.Email);
+            await _client.ExecuteQueryAsync(mergeSql, parameters);
+            _logger.LogInformation("Driver {UserId} ({Email}) logged in: tracked visit in BigQuery identity_users (no duplicates)!", user.UserId, user.Email);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to stream user {UserId} to BigQuery.", user.UserId);
+            _logger.LogError(ex, "Failed to upsert user {UserId} to BigQuery.", user.UserId);
         }
     }
 
@@ -235,29 +266,55 @@ public class BigQueryService : IBigQueryService
         if (_client == null) return;
         try
         {
-            var row = new BigQueryInsertRow
+            var mergeSql = $@"
+                MERGE `{ProjectId}.{DatasetId}.vehicle_vehicles` T
+                USING (
+                  SELECT 
+                    @vehicle_id AS vehicle_id,
+                    @user_id AS user_id,
+                    @vehicle_code AS vehicle_code,
+                    @registration_number AS registration_number,
+                    @vin AS vin,
+                    @manufacturer_id AS manufacturer_id,
+                    @model_id AS model_id,
+                    @variant_id AS variant_id,
+                    @color AS color,
+                    @is_electric AS is_electric,
+                    @status AS status
+                ) S
+                ON T.user_id = S.user_id OR (T.registration_number IS NOT NULL AND T.registration_number = S.registration_number)
+                WHEN MATCHED THEN
+                  UPDATE SET 
+                    updated_at = CURRENT_TIMESTAMP(),
+                    registration_number = COALESCE(S.registration_number, T.registration_number),
+                    color = COALESCE(S.color, T.color),
+                    status = 'ACTIVE'
+                WHEN NOT MATCHED THEN
+                  INSERT (vehicle_id, user_id, vehicle_code, registration_number, vin, manufacturer_id, model_id, variant_id, color, is_electric, status, created_at, updated_at)
+                  VALUES (S.vehicle_id, S.user_id, S.vehicle_code, S.registration_number, S.vin, S.manufacturer_id, S.model_id, S.variant_id, S.color, S.is_electric, S.status, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP());
+            ";
+
+            var parameters = new[]
             {
-                ["vehicle_id"] = vehicle.VehicleId,
-                ["user_id"] = vehicle.UserId,
-                ["vehicle_code"] = vehicle.VehicleCode ?? ("VEH-" + Guid.NewGuid().ToString("N")[..8].ToUpper()),
-                ["registration_number"] = vehicle.RegistrationNumber ?? "TN 38 EV 8899",
-                ["vin"] = vehicle.VIN ?? ("MAT" + Guid.NewGuid().ToString("N")[..14].ToUpper()),
-                ["manufacturer_id"] = vehicle.ManufacturerId > 0 ? vehicle.ManufacturerId : 1,
-                ["model_id"] = vehicle.ModelId > 0 ? vehicle.ModelId : 1,
-                ["variant_id"] = vehicle.VariantId ?? 1,
-                ["color"] = vehicle.Color ?? "Teal Blue",
-                ["is_electric"] = vehicle.IsElectric,
-                ["status"] = vehicle.Status ?? "ACTIVE",
-                ["created_at"] = (vehicle.CreatedAt == default ? DateTime.UtcNow : vehicle.CreatedAt).ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
-                ["updated_at"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+                new BigQueryParameter("vehicle_id", BigQueryDbType.Int64, vehicle.VehicleId),
+                new BigQueryParameter("user_id", BigQueryDbType.Int64, vehicle.UserId),
+                new BigQueryParameter("vehicle_code", BigQueryDbType.String, vehicle.VehicleCode ?? ("VEH-" + Guid.NewGuid().ToString("N")[..8].ToUpper())),
+                new BigQueryParameter("registration_number", BigQueryDbType.String, vehicle.RegistrationNumber ?? "TN 38 EV 8899"),
+                new BigQueryParameter("vin", BigQueryDbType.String, vehicle.VIN ?? ("MAT" + Guid.NewGuid().ToString("N")[..14].ToUpper())),
+                new BigQueryParameter("manufacturer_id", BigQueryDbType.Int64, (long)(vehicle.ManufacturerId > 0 ? vehicle.ManufacturerId : 1)),
+                new BigQueryParameter("model_id", BigQueryDbType.Int64, (long)(vehicle.ModelId > 0 ? vehicle.ModelId : 1)),
+                new BigQueryParameter("variant_id", BigQueryDbType.Int64, (long)(vehicle.VariantId ?? 1)),
+                new BigQueryParameter("color", BigQueryDbType.String, vehicle.Color ?? "Teal Blue"),
+                new BigQueryParameter("is_electric", BigQueryDbType.Bool, vehicle.IsElectric),
+                new BigQueryParameter("status", BigQueryDbType.String, vehicle.Status ?? "ACTIVE"),
             };
 
-            await _client.InsertRowAsync(DatasetId, "vehicle_vehicles", row);
-            _logger.LogInformation("Vehicle {VehicleId} ({Plate}) saved to BigQuery vehicle_vehicles!", vehicle.VehicleId, vehicle.RegistrationNumber);
+            await _client.ExecuteQueryAsync(mergeSql, parameters);
+            _logger.LogInformation("Vehicle {VehicleId} ({Plate}) upserted in BigQuery vehicle_vehicles (no duplicates)!", vehicle.VehicleId, vehicle.RegistrationNumber);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to stream vehicle {VehicleId} to BigQuery.", vehicle.VehicleId);
+            _logger.LogError(ex, "Failed to upsert vehicle {VehicleId} to BigQuery.", vehicle.VehicleId);
         }
     }
 }

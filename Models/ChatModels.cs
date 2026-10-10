@@ -23,6 +23,7 @@ public class Conversation
     public string? Plate { get; set; }
     public int? Soc { get; set; }
     public bool IsOnline { get; set; } = true;
+    public List<GroupMemberDto> Members { get; set; } = new();
 }
 
 public class ChatMessage
@@ -60,6 +61,34 @@ public class CreateGroupDto
     public int RadiusKm { get; set; } = 100;
     public string? Category { get; set; } = "Convoy";
     public string? AvatarUrl { get; set; }
+}
+
+public class UpdateGroupDto
+{
+    public string? Title { get; set; }
+    public string? Description { get; set; }
+    public string? AvatarUrl { get; set; }
+    public int? RadiusKm { get; set; }
+}
+
+public class GroupMemberDto
+{
+    public long UserId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string? AvatarUrl { get; set; }
+    public string? Plate { get; set; }
+    public string? CarModel { get; set; }
+    public bool IsAdmin { get; set; }
+    public DateTime JoinedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class CallSignalDto
+{
+    public string ChannelId { get; set; } = string.Empty;
+    public string TargetUserId { get; set; } = string.Empty;
+    public string CallType { get; set; } = "voice"; // "voice" or "video"
+    public string? Sdp { get; set; }
+    public object? IceCandidate { get; set; }
 }
 
 public class NearbyUserDto

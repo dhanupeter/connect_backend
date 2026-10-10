@@ -276,6 +276,116 @@ public class ChatRepository : IChatRepository
         return conv;
     }
 
+    public async Task<Conversation?> UpdateGroupAsync(string conversationId, UpdateGroupDto dto)
+    {
+        try
+        {
+            using var conn = _dbFactory.CreateConnection();
+            const string sql = @"
+                UPDATE chat.Conversations
+                SET Title = COALESCE(@Title, Title),
+                    Description = COALESCE(@Description, Description),
+                    AvatarUrl = COALESCE(@AvatarUrl, AvatarUrl),
+                    ScopeRadiusKm = COALESCE(@RadiusKm, ScopeRadiusKm),
+                    UpdatedAt = SYSUTCDATETIME()
+                WHERE ConversationId = @ConversationId AND IsGroup = 1;
+            ";
+            await conn.ExecuteAsync(sql, new { conversationId, dto.Title, dto.Description, dto.AvatarUrl, dto.RadiusKm });
+        }
+        catch { }
+
+        if (_memoryConversations.TryGetValue(conversationId, out var conv))
+        {
+            if (!string.IsNullOrEmpty(dto.Title)) conv.Title = dto.Title;
+            if (!string.IsNullOrEmpty(dto.Description)) conv.Description = dto.Description;
+            if (!string.IsNullOrEmpty(dto.AvatarUrl)) conv.AvatarUrl = dto.AvatarUrl;
+            if (dto.RadiusKm.HasValue) conv.ScopeRadiusKm = dto.RadiusKm.Value;
+            conv.UpdatedAt = DateTime.UtcNow;
+            return conv;
+        }
+
+        return null;
+    }
+
+    public async Task<bool> UpdateMemberRoleAsync(string conversationId, long userId, bool isAdmin)
+    {
+        try
+        {
+            using var conn = _dbFactory.CreateConnection();
+            const string sql = @"
+                UPDATE chat.ConversationParticipants
+                SET IsAdmin = @IsAdmin
+                WHERE ConversationId = @ConversationId AND UserId = @UserId;
+            ";
+            await conn.ExecuteAsync(sql, new { conversationId, userId, isAdmin });
+        }
+        catch { }
+
+        if (_memoryConversations.TryGetValue(conversationId, out var conv))
+        {
+            var member = conv.Members.FirstOrDefault(m => m.UserId == userId);
+            if (member != null) member.IsAdmin = isAdmin;
+            return true;
+        }
+        return true;
+    }
+
+    public async Task<bool> RemoveMemberAsync(string conversationId, long userId)
+    {
+        try
+        {
+            using var conn = _dbFactory.CreateConnection();
+            const string sql = @"
+                DELETE FROM chat.ConversationParticipants
+                WHERE ConversationId = @ConversationId AND UserId = @UserId;
+            ";
+            await conn.ExecuteAsync(sql, new { conversationId, userId });
+        }
+        catch { }
+
+        if (_memoryConversations.TryGetValue(conversationId, out var conv))
+        {
+            conv.Members.RemoveAll(m => m.UserId == userId);
+            conv.ParticipantCount = Math.Max(1, conv.ParticipantCount - 1);
+            return true;
+        }
+        return true;
+    }
+
+    public async Task<bool> AddMemberAsync(string conversationId, long userId, bool isAdmin)
+    {
+        try
+        {
+            using var conn = _dbFactory.CreateConnection();
+            const string sql = @"
+                IF NOT EXISTS (SELECT 1 FROM chat.ConversationParticipants WHERE ConversationId = @ConversationId AND UserId = @UserId)
+                BEGIN
+                    INSERT INTO chat.ConversationParticipants (ConversationId, UserId, JoinedAt, IsAdmin)
+                    VALUES (@ConversationId, @UserId, SYSUTCDATETIME(), @IsAdmin);
+                END
+            ";
+            await conn.ExecuteAsync(sql, new { conversationId, userId, isAdmin });
+        }
+        catch { }
+
+        if (_memoryConversations.TryGetValue(conversationId, out var conv))
+        {
+            if (!conv.Members.Any(m => m.UserId == userId))
+            {
+                conv.Members.Add(new GroupMemberDto
+                {
+                    UserId = userId,
+                    Name = $"Driver #{userId}",
+                    IsAdmin = isAdmin,
+                    JoinedAt = DateTime.UtcNow
+                });
+                conv.ParticipantCount++;
+            }
+            return true;
+        }
+        return true;
+    }
+
     public async Task<IEnumerable<NearbyUserDto>> GetNearbyUsersAsync(double myLat, double myLng, double radiusKm = 100)
     {
         var result = new List<NearbyUserDto>();

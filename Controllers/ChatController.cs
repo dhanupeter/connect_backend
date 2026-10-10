@@ -86,6 +86,42 @@ public class ChatController : ControllerBase
         return Ok(new { success = true, data = group });
     }
 
+    [HttpPut("groups/{id}")]
+    public async Task<IActionResult> UpdateGroup(string id, [FromBody] UpdateGroupDto dto)
+    {
+        var updated = await _chatRepo.UpdateGroupAsync(id, dto);
+        if (updated == null)
+        {
+            return NotFound(new { success = false, message = "Group not found." });
+        }
+        await _hubContext.Clients.Group(id).SendAsync("GroupDetailsUpdated", updated);
+        return Ok(new { success = true, data = updated });
+    }
+
+    [HttpPut("groups/{id}/members/{memberId}/role")]
+    public async Task<IActionResult> UpdateMemberRole(string id, long memberId, [FromBody] UpdateRoleRequest req)
+    {
+        var success = await _chatRepo.UpdateMemberRoleAsync(id, memberId, req.IsAdmin);
+        await _hubContext.Clients.Group(id).SendAsync("MemberRoleUpdated", new { conversationId = id, userId = memberId, isAdmin = req.IsAdmin });
+        return Ok(new { success = true, userId = memberId, isAdmin = req.IsAdmin });
+    }
+
+    [HttpDelete("groups/{id}/members/{memberId}")]
+    public async Task<IActionResult> RemoveMember(string id, long memberId)
+    {
+        var success = await _chatRepo.RemoveMemberAsync(id, memberId);
+        await _hubContext.Clients.Group(id).SendAsync("MemberRemoved", new { conversationId = id, userId = memberId });
+        return Ok(new { success = true, userId = memberId });
+    }
+
+    [HttpPost("groups/{id}/members")]
+    public async Task<IActionResult> AddMember(string id, [FromBody] AddMemberRequest req)
+    {
+        var success = await _chatRepo.AddMemberAsync(id, req.UserId, req.IsAdmin);
+        await _hubContext.Clients.Group(id).SendAsync("MemberAdded", new { conversationId = id, userId = req.UserId, isAdmin = req.IsAdmin });
+        return Ok(new { success = true, userId = req.UserId });
+    }
+
     [HttpGet("nearby")]
     public async Task<IActionResult> GetNearby(
         [FromQuery] double lat = 11.0168,
@@ -147,4 +183,15 @@ public class ChatController : ControllerBase
             return StatusCode(500, new { success = false, message = "File upload failed: " + ex.Message });
         }
     }
+}
+
+public class UpdateRoleRequest
+{
+    public bool IsAdmin { get; set; }
+}
+
+public class AddMemberRequest
+{
+    public long UserId { get; set; }
+    public bool IsAdmin { get; set; }
 }

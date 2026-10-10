@@ -45,7 +45,7 @@ public class ChatHub : Hub
             CreatedAt = DateTime.UtcNow
         };
 
-        // Persist in SQL Server
+        // Persist in SQL Server / in-memory
         await _chatRepo.SaveMessageAsync(message);
 
         // Broadcast to group members in real-time
@@ -74,7 +74,79 @@ public class ChatHub : Hub
             Timestamp = DateTime.UtcNow
         };
 
-        // Broadcast to all connected clients within community
         await Clients.All.SendAsync("SosBroadcast", sosPayload);
+    }
+
+    // =========================================================================
+    // WebRTC Calling & Media Signaling (Pure Open-Source - No Agora Required)
+    // =========================================================================
+
+    public async Task InitiateCall(string channelId, string callType, string callerName, string? callerAvatar, string? calleeUserId = null)
+    {
+        _logger.LogInformation("Initiating {CallType} call in channel {ChannelId} from {CallerName}", callType, channelId, callerName);
+        
+        var callPayload = new
+        {
+            ChannelId = channelId,
+            CallType = callType, // "voice" or "video"
+            CallerName = callerName,
+            CallerAvatar = callerAvatar,
+            CallerConnectionId = Context.ConnectionId,
+            Timestamp = DateTime.UtcNow
+        };
+
+        // Broadcast incoming call event to target channel or all participants
+        await Clients.OthersInGroup(channelId).SendAsync("IncomingCall", callPayload);
+    }
+
+    public async Task AcceptCall(string channelId, string responderName, string callerConnectionId)
+    {
+        await Clients.Client(callerConnectionId).SendAsync("CallAccepted", new
+        {
+            ChannelId = channelId,
+            ResponderName = responderName,
+            ResponderConnectionId = Context.ConnectionId
+        });
+    }
+
+    public async Task RejectCall(string channelId, string callerConnectionId, string reason)
+    {
+        await Clients.Client(callerConnectionId).SendAsync("CallRejected", new
+        {
+            ChannelId = channelId,
+            Reason = reason ?? "busy",
+            ResponderConnectionId = Context.ConnectionId
+        });
+    }
+
+    public async Task EndCall(string channelId)
+    {
+        await Clients.Group(channelId).SendAsync("CallEnded", new
+        {
+            ChannelId = channelId,
+            EndedBy = Context.ConnectionId,
+            Timestamp = DateTime.UtcNow
+        });
+    }
+
+    public async Task SendWebRtcSignal(string channelId, string targetConnectionId, object signalData)
+    {
+        // Relays SDP Offer, SDP Answer, or ICE candidate peer-to-peer
+        if (!string.IsNullOrEmpty(targetConnectionId))
+        {
+            await Clients.Client(targetConnectionId).SendAsync("ReceiveWebRtcSignal", new
+            {
+                SenderConnectionId = Context.ConnectionId,
+                Signal = signalData
+            });
+        }
+        else
+        {
+            await Clients.OthersInGroup(channelId).SendAsync("ReceiveWebRtcSignal", new
+            {
+                SenderConnectionId = Context.ConnectionId,
+                Signal = signalData
+            });
+        }
     }
 }
