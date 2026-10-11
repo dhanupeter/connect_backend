@@ -449,23 +449,25 @@ public class BigQueryService : IBigQueryService
     {
         var all = await GetContactsAsync();
         var nearby = new List<NearbyUserDto>();
-        var cutoff = DateTime.UtcNow.AddMinutes(-30);
+        var cutoff = DateTime.UtcNow.AddHours(-48);
 
         foreach (var u in all)
         {
-            // Skip users who turned location sharing off or have no recent live location
-            if (!string.Equals(u.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase)) continue;
-            if (u.LastActiveAt < cutoff) continue;
+            // Skip users who explicitly opted out of discovery
+            if (string.Equals(u.Status, "INACTIVE", StringComparison.OrdinalIgnoreCase)) continue;
+            if (u.LastActiveAt > DateTime.MinValue && u.LastActiveAt < cutoff) continue;
 
-            if (u.Latitude != 0 && u.Longitude != 0)
+            double dist = 0;
+            if (u.Latitude != 0 && u.Longitude != 0 && lat != 0 && lng != 0)
             {
-                var dist = CalculateHaversine(lat, lng, u.Latitude, u.Longitude);
-                if (dist <= radiusKm)
-                {
-                    u.DistanceKm = Math.Round(dist, 1);
-                    u.Status = "Online";
-                    nearby.Add(u);
-                }
+                dist = CalculateHaversine(lat, lng, u.Latitude, u.Longitude);
+            }
+
+            if (radiusKm <= 0 || dist <= radiusKm)
+            {
+                u.DistanceKm = Math.Round(dist, 1);
+                u.Status = "Online";
+                nearby.Add(u);
             }
         }
 
