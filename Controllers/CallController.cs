@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
 using System.Data;
 using ConnectBackend.Data;
+using ConnectBackend.Hubs;
 using Dapper;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 
 namespace ConnectBackend.Controllers;
 
@@ -84,16 +86,22 @@ public class CallController : ControllerBase
 {
     private static readonly ConcurrentDictionary<string, CallSession> _activeCalls = new();
     private static readonly ConcurrentDictionary<string, CallLogRecord> _callHistory = new();
+    private static readonly ConcurrentDictionary<string, DateTime> _endedCallIds = new();
     private readonly IDbConnectionFactory _dbFactory;
     private readonly ILogger<CallController> _logger;
-
     private readonly ConnectBackend.Services.IPushService _push;
+    private readonly IHubContext<ChatHub> _hubContext;
 
-    public CallController(IDbConnectionFactory dbFactory, ILogger<CallController> logger, ConnectBackend.Services.IPushService push)
+    public CallController(
+        IDbConnectionFactory dbFactory,
+        ILogger<CallController> logger,
+        ConnectBackend.Services.IPushService push,
+        IHubContext<ChatHub> hubContext)
     {
         _dbFactory = dbFactory;
         _logger = logger;
         _push = push;
+        _hubContext = hubContext;
     }
 
     [HttpPost("invite")]
@@ -204,6 +212,7 @@ public class CallController : ControllerBase
     [HttpPost("reject")]
     public async Task<IActionResult> Reject([FromBody] CallAnswerRequest req)
     {
+        _endedCallIds[req.CallId] = DateTime.UtcNow;
         if (_activeCalls.TryGetValue(req.CallId, out var session))
         {
             session.Status = "rejected";
@@ -215,7 +224,13 @@ public class CallController : ControllerBase
                 await PersistCallLogAsync(log);
             }
 
-            return Ok(new { success = true });
+            try
+            {
+                await _hubContext.Clients.All.SendAsync("CallEnded", req.CallId);
+            }
+            catch { }
+
+            return Ok(new { success = true, callEnded = true, status = "rejected" });
         }
 
         return NotFound(new { success = false });
@@ -224,12 +239,18 @@ public class CallController : ControllerBase
     [HttpGet("status/{callId}")]
     public IActionResult GetStatus(string callId)
     {
-        if (_activeCalls.TryGetValue(callId, out var session))
+        if (_endedCallIds.ContainsKey(callId))
         {
-            return Ok(new { success = true, data = session });
+            return Ok(new { success = true, callEnded = true, data = new { status = "ended" } });
         }
 
-        return Ok(new { success = true, data = new { status = "ended" } });
+        if (_activeCalls.TryGetValue(callId, out var session))
+        {
+            var isEnded = session.Status == "ended" || session.Status == "rejected";
+            return Ok(new { success = true, callEnded = isEnded, data = session });
+        }
+
+        return Ok(new { success = true, callEnded = true, data = new { status = "ended" } });
     }
 
     [HttpPost("candidate")]
@@ -262,21 +283,37 @@ public class CallController : ControllerBase
     [HttpGet("candidates/{callId}")]
     public IActionResult GetCandidates(string callId, [FromQuery] long forUserId)
     {
+        if (_endedCallIds.ContainsKey(callId))
+        {
+            return Ok(new { success = true, callEnded = true, status = "ended", candidates = new List<IceCandidateDto>() });
+        }
+
         if (_activeCalls.TryGetValue(callId, out var session))
         {
+            if (session.Status == "ended" || session.Status == "rejected")
+            {
+                return Ok(new { success = true, callEnded = true, status = session.Status, candidates = new List<IceCandidateDto>() });
+            }
+
             var list = forUserId == session.CallerId
                 ? session.CandidatesFromCallee
                 : session.CandidatesFromCaller;
 
-            return Ok(new { success = true, candidates = list });
+            return Ok(new { success = true, callEnded = false, status = session.Status, candidates = list });
         }
 
-        return Ok(new { success = true, candidates = new List<IceCandidateDto>() });
+        return Ok(new { success = true, callEnded = true, status = "ended", candidates = new List<IceCandidateDto>() });
     }
 
     [HttpPost("end")]
     public async Task<IActionResult> EndCall([FromBody] CallAnswerRequest req)
     {
+        _endedCallIds[req.CallId] = DateTime.UtcNow;
+
+        // Clean up stale ended IDs older than 10 minutes
+        var staleKeys = _endedCallIds.Where(kvp => (DateTime.UtcNow - kvp.Value).TotalMinutes > 10).Select(kvp => kvp.Key).ToList();
+        foreach (var k in staleKeys) _endedCallIds.TryRemove(k, out _);
+
         if (_activeCalls.TryRemove(req.CallId, out var session))
         {
             session.Status = "ended";
@@ -297,7 +334,13 @@ public class CallController : ControllerBase
             }
         }
 
-        return Ok(new { success = true });
+        try
+        {
+            await _hubContext.Clients.All.SendAsync("CallEnded", req.CallId);
+        }
+        catch { }
+
+        return Ok(new { success = true, callEnded = true, status = "ended" });
     }
 
     [HttpGet("history/{userId}")]
