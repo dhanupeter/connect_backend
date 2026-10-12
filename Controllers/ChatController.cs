@@ -74,16 +74,36 @@ public class ChatController : ControllerBase
 
         var saved = await _chatRepo.SaveMessageAsync(message);
 
-        // Broadcast in real-time via SignalR
+        // Broadcast in real-time via SignalR to conversation group
         await _hubContext.Clients.Group(dto.ConversationId).SendAsync("ReceiveMessage", saved);
 
-        // Push notification to the other person in a direct chat (id = chat_{a}_{b})
+        // Push notification & SignalR direct alert to the recipient in a direct chat (id = chat_{a}_{b})
         var idParts = dto.ConversationId.Split('_');
         if (idParts.Length == 3 && idParts[0] == "chat" &&
             long.TryParse(idParts[1], out var ua) && long.TryParse(idParts[2], out var ub))
         {
             var receiverId = ua == userId ? ub : ua;
             var preview = string.IsNullOrWhiteSpace(dto.MessageText) ? "Sent an attachment" : dto.MessageText;
+
+            // SignalR user-level push event (immediately triggers heads-up notifications even when app is open or on other screens)
+            try
+            {
+                await _hubContext.Clients.Group($"user_{receiverId}").SendAsync("NewMessageNotification", new
+                {
+                    ConversationId = dto.ConversationId,
+                    SenderId = userId,
+                    SenderName = userName,
+                    MessageText = preview,
+                    MessageType = dto.MessageType ?? "text",
+                    CreatedAt = saved.CreatedAt
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogTrace("Direct SignalR notification failed: {Msg}", ex.Message);
+            }
+
+            // Also send FCM push notification
             _ = _push.SendToUserAsync(receiverId, userName, preview, new Dictionary<string, string>
             {
                 ["type"] = "chat",

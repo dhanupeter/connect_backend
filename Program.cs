@@ -68,6 +68,8 @@ builder.Services.AddSingleton<IPushService, PushService>();
 
 // Real-time WebSockets & SignalR
 builder.Services.AddSignalR();
+builder.Services.AddHttpClient();
+builder.Services.AddSingleton<ITurnCredentialsService, CloudflareTurnService>();
 
 var app = builder.Build();
 

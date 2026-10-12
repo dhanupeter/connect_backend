@@ -91,17 +91,27 @@ public class CallController : ControllerBase
     private readonly ILogger<CallController> _logger;
     private readonly ConnectBackend.Services.IPushService _push;
     private readonly IHubContext<ChatHub> _hubContext;
+    private readonly ConnectBackend.Services.ITurnCredentialsService _turnService;
 
     public CallController(
         IDbConnectionFactory dbFactory,
         ILogger<CallController> logger,
         ConnectBackend.Services.IPushService push,
-        IHubContext<ChatHub> hubContext)
+        IHubContext<ChatHub> hubContext,
+        ConnectBackend.Services.ITurnCredentialsService turnService)
     {
         _dbFactory = dbFactory;
         _logger = logger;
         _push = push;
         _hubContext = hubContext;
+        _turnService = turnService;
+    }
+
+    [HttpGet("turn-credentials")]
+    public async Task<IActionResult> GetTurnCredentials([FromQuery] long? userId = null)
+    {
+        var creds = await _turnService.GetIceServersAsync(userId);
+        return Ok(creds);
     }
 
     [HttpPost("invite")]
@@ -368,7 +378,7 @@ public class CallController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning("DB Call History query fallback: {Msg}", ex.Message);
+            _logger.LogTrace("DB Call History query fallback: {Msg}", ex.Message);
         }
 
         // Memory fallback

@@ -15,6 +15,12 @@ public class ChatHub : Hub
         _logger = logger;
     }
 
+    public async Task RegisterUser(long userId)
+    {
+        await Groups.AddToGroupAsync(Context.ConnectionId, $"user_{userId}");
+        _logger.LogInformation("Connection {ConnectionId} registered as user_{UserId}", Context.ConnectionId, userId);
+    }
+
     public async Task JoinConversation(string conversationId)
     {
         await Groups.AddToGroupAsync(Context.ConnectionId, conversationId);
