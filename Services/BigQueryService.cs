@@ -405,6 +405,8 @@ public class BigQueryService : IBigQueryService
                     status_description,
                     last_login_at
                 FROM `{ProjectId}.{DatasetId}.identity_users`
+                WHERE user_id IS NOT NULL AND user_id > 0
+                QUALIFY ROW_NUMBER() OVER(PARTITION BY user_id ORDER BY last_login_at DESC) = 1
                 ORDER BY user_id ASC
             ";
 
@@ -416,7 +418,7 @@ public class BigQueryService : IBigQueryService
                 var fName = r["first_name"]?.ToString() ?? "";
                 var lName = r["last_name"]?.ToString() ?? "";
                 var fullName = $"{fName} {lName}".Trim();
-                if (string.IsNullOrWhiteSpace(fullName)) fullName = "EV Driver";
+                if (string.IsNullOrWhiteSpace(fullName)) fullName = "User";
 
                 list.Add(new NearbyUserDto
                 {
@@ -432,7 +434,7 @@ public class BigQueryService : IBigQueryService
                     DistanceKm = 0,
                     LastActiveAt = r["last_login_at"] is DateTime lla ? DateTime.SpecifyKind(lla, DateTimeKind.Utc) : DateTime.MinValue,
                     Status = r["status"]?.ToString() ?? "ACTIVE",
-                    StatusDescription = r["status_description"]?.ToString() ?? "⚡ Live EV Enthusiast"
+                    StatusDescription = r["status_description"]?.ToString() ?? "Available"
                 });
             }
 
@@ -449,13 +451,11 @@ public class BigQueryService : IBigQueryService
     {
         var all = await GetContactsAsync();
         var nearby = new List<NearbyUserDto>();
-        var cutoff = DateTime.UtcNow.AddHours(-48);
 
         foreach (var u in all)
         {
             // Skip users who explicitly opted out of discovery
             if (string.Equals(u.Status, "INACTIVE", StringComparison.OrdinalIgnoreCase)) continue;
-            if (u.LastActiveAt > DateTime.MinValue && u.LastActiveAt < cutoff) continue;
 
             double dist = 0;
             if (u.Latitude != 0 && u.Longitude != 0 && lat != 0 && lng != 0)
@@ -463,7 +463,7 @@ public class BigQueryService : IBigQueryService
                 dist = CalculateHaversine(lat, lng, u.Latitude, u.Longitude);
             }
 
-            if (radiusKm <= 0 || dist <= radiusKm)
+            if (radiusKm <= 0 || radiusKm >= 1000 || dist <= radiusKm)
             {
                 u.DistanceKm = Math.Round(dist, 1);
                 u.Status = "Online";
