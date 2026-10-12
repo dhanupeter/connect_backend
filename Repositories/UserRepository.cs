@@ -8,8 +8,33 @@ namespace ConnectBackend.Repositories;
 
 public class UserRepository : IUserRepository
 {
+    private static readonly ConcurrentDictionary<string, User> _memoryUsers = new()
+    {
+        ["charles14.02.2000@gmail.com"] = new User
+        {
+            UserId = 1001,
+            Email = "charles14.02.2000@gmail.com",
+            FirstName = "Charles",
+            LastName = "",
+            ProfileImageUrl = "https://lh3.googleusercontent.com/a/ACg8ocKD9QsOHtmqcUQDC-Cwe-WYckDSjy5LyHgGZZmADyJaaaY-ig=s96-c",
+            MobileNumber = "+91 98765 43210",
+            Status = "ACTIVE",
+            IsEmailVerified = true
+        },
+        ["dhanupeter@gmail.com"] = new User
+        {
+            UserId = 1002,
+            Email = "dhanupeter@gmail.com",
+            FirstName = "Peter",
+            LastName = "J",
+            ProfileImageUrl = "https://lh3.googleusercontent.com/a/ACg8ocICFxlSlZP7YJD6o4FVosmy0TWIckb53v9vTLz--BQ1TnDeYiU=s96-c",
+            MobileNumber = "+91 98765 43210",
+            Status = "ACTIVE",
+            IsEmailVerified = true
+        }
+    };
+
     private readonly IDbConnectionFactory _connectionFactory;
-    private static readonly ConcurrentDictionary<string, User> _memoryUsers = new();
 
     public UserRepository(IDbConnectionFactory connectionFactory)
     {
@@ -149,13 +174,29 @@ public class UserRepository : IUserRepository
                 return existing;
             }
 
-            user.UserId = _memoryUsers.Count + 1001;
+            if (string.Equals(user.Email, "charles14.02.2000@gmail.com", StringComparison.OrdinalIgnoreCase))
+            {
+                user.UserId = 1001;
+            }
+            else if (string.Equals(user.Email, "dhanupeter@gmail.com", StringComparison.OrdinalIgnoreCase))
+            {
+                user.UserId = 1002;
+            }
+            else
+            {
+                user.UserId = _memoryUsers.Count + 1003;
+            }
+
             user.UserCode ??= "USR-" + Guid.NewGuid().ToString("N")[..8].ToUpper();
             user.Status = "ACTIVE";
             user.CreatedAt = DateTime.UtcNow;
             user.LastLoginAt = DateTime.UtcNow;
 
             _memoryUsers[user.FirebaseUid ?? user.UserId.ToString()] = user;
+            if (!string.IsNullOrEmpty(user.Email))
+            {
+                _memoryUsers[user.Email] = user;
+            }
             return user;
         }
     }
