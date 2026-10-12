@@ -367,7 +367,7 @@ public class ChatRepository : IChatRepository
             _registeredUsers[userId] = new NearbyUserDto
             {
                 UserId = userId,
-                Name = $"Driver #{userId}",
+                Name = $"User #{userId}",
                 Email = "",
                 AvatarUrl = "https://lh3.googleusercontent.com/a/default-user",
                 CarModel = "Electric Vehicle",

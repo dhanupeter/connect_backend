@@ -155,6 +155,11 @@ public class ChatController : ControllerBase
     public async Task<IActionResult> UpdateLocation([FromBody] UpdateLocationRequest req)
     {
         var success = await _chatRepo.UpdateUserLocationAsync(req.UserId, req.Latitude, req.Longitude, req.IsDiscoverable);
+        try
+        {
+            await _hubContext.Clients.All.SendAsync("NearbyLocationUpdated", new { userId = req.UserId, latitude = req.Latitude, longitude = req.Longitude, isDiscoverable = req.IsDiscoverable });
+        }
+        catch { }
         return Ok(new { success = true, message = "Location updated successfully." });
     }
 
@@ -162,6 +167,11 @@ public class ChatController : ControllerBase
     public async Task<IActionResult> SetLocationSharing([FromBody] LocationSharingRequest req)
     {
         var success = await _chatRepo.SetLocationSharingAsync(req.UserId, req.IsDiscoverable);
+        try
+        {
+            await _hubContext.Clients.All.SendAsync("NearbyVisibilityChanged", new { userId = req.UserId, isDiscoverable = req.IsDiscoverable });
+        }
+        catch { }
         return Ok(new { success = true, isDiscoverable = req.IsDiscoverable });
     }
 
