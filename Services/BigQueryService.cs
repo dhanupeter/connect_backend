@@ -457,11 +457,13 @@ public class BigQueryService : IBigQueryService
             // Skip users who explicitly opted out of discovery
             if (string.Equals(u.Status, "INACTIVE", StringComparison.OrdinalIgnoreCase)) continue;
 
-            double dist = 0;
-            if (u.Latitude != 0 && u.Longitude != 0 && lat != 0 && lng != 0)
+            // Skip users who have never reported their real GPS location
+            if (u.Latitude == 0 || u.Longitude == 0 || lat == 0 || lng == 0)
             {
-                dist = CalculateHaversine(lat, lng, u.Latitude, u.Longitude);
+                continue;
             }
+
+            double dist = CalculateHaversine(lat, lng, u.Latitude, u.Longitude);
 
             if (radiusKm <= 0 || radiusKm >= 1000 || dist <= radiusKm)
             {
@@ -656,8 +658,8 @@ public class BigQueryService : IBigQueryService
                 new BigQueryParameter("status", BigQueryDbType.String, user.Status ?? "ACTIVE"),
                 new BigQueryParameter("is_email_verified", BigQueryDbType.Bool, user.IsEmailVerified),
                 new BigQueryParameter("is_mobile_verified", BigQueryDbType.Bool, user.IsMobileVerified),
-                new BigQueryParameter("latitude", BigQueryDbType.Float64, 11.0168),
-                new BigQueryParameter("longitude", BigQueryDbType.Float64, 76.9558),
+                new BigQueryParameter("latitude", BigQueryDbType.Float64, user.Latitude != 0 ? user.Latitude : 0.0),
+                new BigQueryParameter("longitude", BigQueryDbType.Float64, user.Longitude != 0 ? user.Longitude : 0.0),
             };
 
             await _client.ExecuteQueryAsync(mergeSql, parameters);
