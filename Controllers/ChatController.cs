@@ -234,7 +234,12 @@ public class ChatController : ControllerBase
             }
 
             var relativeUrl = $"/uploads/chat/{uniqueFileName}";
-            var baseUrl = $"{Request.Scheme}://{Request.Host}";
+            var scheme = Request.Headers.TryGetValue("X-Forwarded-Proto", out var proto) ? proto.ToString() : Request.Scheme;
+            if (Request.Host.Host.Contains("onrender.com", StringComparison.OrdinalIgnoreCase))
+            {
+                scheme = "https";
+            }
+            var baseUrl = $"{scheme}://{Request.Host}";
             var fullUrl = $"{baseUrl}{relativeUrl}";
 
             var isImage = file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase);

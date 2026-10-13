@@ -85,23 +85,26 @@ public class ChatRepository : IChatRepository
             using var conn = _dbFactory.CreateConnection();
 
             const string sql = @"
-                SELECT TOP (@Limit)
-                    MessageId,
-                    ConversationId,
-                    SenderUserId,
-                    SenderName,
-                    SenderAvatar,
-                    MessageText,
-                    MessageType,
-                    AttachmentUrl,
-                    FileName,
-                    FileSize,
-                    MetadataJson,
-                    Status,
-                    CreatedAt
-                FROM chat.Messages
-                WHERE ConversationId = @ConversationId
-                ORDER BY CreatedAt ASC;
+                SELECT * FROM (
+                    SELECT TOP (@Limit)
+                        MessageId,
+                        ConversationId,
+                        SenderUserId,
+                        SenderName,
+                        SenderAvatar,
+                        MessageText,
+                        MessageType,
+                        AttachmentUrl,
+                        FileName,
+                        FileSize,
+                        MetadataJson,
+                        Status,
+                        CreatedAt
+                    FROM chat.Messages
+                    WHERE ConversationId = @ConversationId
+                    ORDER BY CreatedAt DESC
+                ) sub
+                ORDER BY sub.CreatedAt ASC;
             ";
 
             var list = (await conn.QueryAsync<ChatMessage>(sql, new { ConversationId = conversationId, Limit = limit })).ToList();

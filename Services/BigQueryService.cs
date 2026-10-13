@@ -346,7 +346,7 @@ public class BigQueryService : IBigQueryService
                     created_at
                 FROM `{ProjectId}.{DatasetId}.chat_messages`
                 WHERE conversation_id = @conv_id
-                ORDER BY created_at ASC
+                ORDER BY created_at DESC
                 LIMIT {Math.Clamp(limit, 1, 200)}
             ";
 
@@ -378,7 +378,7 @@ public class BigQueryService : IBigQueryService
                 });
             }
 
-            return list;
+            return list.OrderBy(m => m.CreatedAt).ToList();
         }
         catch (Exception ex)
         {
