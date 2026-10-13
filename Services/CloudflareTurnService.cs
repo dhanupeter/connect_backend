@@ -150,12 +150,23 @@ public class CloudflareTurnService : ITurnCredentialsService
     {
         return new TurnCredentialsResponse
         {
-            Success = false,
-            Provider = "fallback_stun",
-            Message = reason,
+            Success = true,
+            Provider = "gcp_coturn_dedicated",
+            Message = "Operating on dedicated Google Cloud Coturn TURN relay server.",
             IceServers = new List<object>
             {
-                new { urls = new[] { "stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun.cloudflare.com:3478" } }
+                new { urls = new[] { "stun:136.111.131.213:3478", "stun:stun.l.google.com:19302" } },
+                new
+                {
+                    urls = new[]
+                    {
+                        "turn:136.111.131.213:3478",
+                        "turn:136.111.131.213:3478?transport=udp",
+                        "turn:136.111.131.213:3478?transport=tcp"
+                    },
+                    username = "connectuser",
+                    credential = "ConnectSecret2027!"
+                }
             }
         };
     }
