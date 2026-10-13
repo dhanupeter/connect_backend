@@ -392,22 +392,29 @@ public class BigQueryService : IBigQueryService
         if (_client == null) return Enumerable.Empty<NearbyUserDto>();
         try
         {
+            await EnsureLocationsTableAsync();
             var sql = $@"
+                WITH LatestLocations AS (
+                    SELECT user_id, latitude, longitude, is_discoverable,
+                        ROW_NUMBER() OVER(PARTITION BY user_id ORDER BY recorded_at DESC) as rn
+                    FROM `{ProjectId}.{DatasetId}.user_locations`
+                )
                 SELECT 
-                    user_id,
-                    first_name,
-                    last_name,
-                    email,
-                    profile_image_url,
-                    latitude,
-                    longitude,
-                    status,
-                    status_description,
-                    last_login_at
-                FROM `{ProjectId}.{DatasetId}.identity_users`
-                WHERE user_id IS NOT NULL AND user_id > 0
-                QUALIFY ROW_NUMBER() OVER(PARTITION BY user_id ORDER BY last_login_at DESC) = 1
-                ORDER BY user_id ASC
+                    u.user_id,
+                    u.first_name,
+                    u.last_name,
+                    u.email,
+                    u.profile_image_url,
+                    COALESCE(loc.latitude, u.latitude, 0.0) AS latitude,
+                    COALESCE(loc.longitude, u.longitude, 0.0) AS longitude,
+                    CASE WHEN loc.is_discoverable IS FALSE THEN 'INACTIVE' ELSE u.status END AS status,
+                    u.status_description,
+                    u.last_login_at
+                FROM `{ProjectId}.{DatasetId}.identity_users` u
+                LEFT JOIN LatestLocations loc ON u.user_id = loc.user_id AND loc.rn = 1
+                WHERE u.user_id IS NOT NULL AND u.user_id > 0
+                QUALIFY ROW_NUMBER() OVER(PARTITION BY u.user_id ORDER BY u.last_login_at DESC) = 1
+                ORDER BY u.user_id ASC
             ";
 
             var results = await _client.ExecuteQueryAsync(sql, null);
@@ -498,35 +505,41 @@ public class BigQueryService : IBigQueryService
         }
     }
 
+    private bool _locationsTableReady;
+
+    private async Task EnsureLocationsTableAsync()
+    {
+        if (_client == null || _locationsTableReady) return;
+        await _client.ExecuteQueryAsync($@"
+            CREATE TABLE IF NOT EXISTS `{ProjectId}.{DatasetId}.user_locations` (
+                user_id INT64,
+                latitude FLOAT64,
+                longitude FLOAT64,
+                is_discoverable BOOL,
+                recorded_at TIMESTAMP
+            )", null);
+        _locationsTableReady = true;
+    }
+
     public async Task UpdateUserLocationAsync(long userId, double lat, double lng, bool isDiscoverable)
     {
         if (_client == null) return;
         try
         {
-            var sql = $@"
-                UPDATE `{ProjectId}.{DatasetId}.identity_users`
-                SET 
-                    latitude = @lat,
-                    longitude = @lng,
-                    last_login_at = CURRENT_TIMESTAMP(),
-                    updated_at = CURRENT_TIMESTAMP(),
-                    status = CASE WHEN @disc THEN 'ACTIVE' ELSE 'INACTIVE' END
-                WHERE user_id = @uid
-            ";
-
-            var parameters = new[]
+            await EnsureLocationsTableAsync();
+            var row = new BigQueryInsertRow
             {
-                new BigQueryParameter("lat", BigQueryDbType.Float64, lat),
-                new BigQueryParameter("lng", BigQueryDbType.Float64, lng),
-                new BigQueryParameter("disc", BigQueryDbType.Bool, isDiscoverable),
-                new BigQueryParameter("uid", BigQueryDbType.Int64, userId)
+                ["user_id"] = userId,
+                ["latitude"] = lat,
+                ["longitude"] = lng,
+                ["is_discoverable"] = isDiscoverable,
+                ["recorded_at"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
             };
-
-            await _client.ExecuteQueryAsync(sql, parameters);
+            await _client.InsertRowAsync(DatasetId, "user_locations", row);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to update user location in BigQuery.");
+            _logger.LogTrace("Stream user location to BigQuery fallback: {Msg}", ex.Message);
         }
     }
 
@@ -658,8 +671,8 @@ public class BigQueryService : IBigQueryService
                 new BigQueryParameter("status", BigQueryDbType.String, user.Status ?? "ACTIVE"),
                 new BigQueryParameter("is_email_verified", BigQueryDbType.Bool, user.IsEmailVerified),
                 new BigQueryParameter("is_mobile_verified", BigQueryDbType.Bool, user.IsMobileVerified),
-                new BigQueryParameter("latitude", BigQueryDbType.Float64, user.Latitude != 0 ? user.Latitude : 0.0),
-                new BigQueryParameter("longitude", BigQueryDbType.Float64, user.Longitude != 0 ? user.Longitude : 0.0),
+                new BigQueryParameter("latitude", BigQueryDbType.Float64, 0.0),
+                new BigQueryParameter("longitude", BigQueryDbType.Float64, 0.0),
             };
 
             await _client.ExecuteQueryAsync(mergeSql, parameters);
