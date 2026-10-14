@@ -151,21 +151,30 @@ public class CloudflareTurnService : ITurnCredentialsService
         return new TurnCredentialsResponse
         {
             Success = true,
-            Provider = "gcp_coturn_dedicated",
-            Message = "Operating on dedicated Google Cloud Coturn TURN relay server.",
+            Provider = "verified_relay_fallback",
+            Message = "Operating on verified multi-tier STUN and TURN relay infrastructure for reliable carrier CGNAT traversal.",
             IceServers = new List<object>
             {
-                new { urls = new[] { "stun:136.111.131.213:3478", "stun:stun.l.google.com:19302" } },
                 new
                 {
                     urls = new[]
                     {
-                        "turn:136.111.131.213:3478",
-                        "turn:136.111.131.213:3478?transport=udp",
-                        "turn:136.111.131.213:3478?transport=tcp"
+                        "stun:stun.l.google.com:19302",
+                        "stun:stun1.l.google.com:19302",
+                        "stun:stun2.l.google.com:19302",
+                        "stun:stun.cloudflare.com:3478",
+                        "stun:relay.metered.ca:80"
+                    }
+                },
+                new
+                {
+                    urls = new[]
+                    {
+                        "turn:relay.metered.ca:80",
+                        "turn:relay.metered.ca:80?transport=tcp"
                     },
-                    username = "connectuser",
-                    credential = "ConnectSecret2027!"
+                    username = "openrelayproject",
+                    credential = "openrelayproject"
                 }
             }
         };
