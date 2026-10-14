@@ -25,5 +25,7 @@ public interface IBigQueryService
     Task SetDiscoverableAsync(long userId, bool isDiscoverable);
     Task RegisterDeviceAsync(DeviceInfoDto device);
     Task<IEnumerable<string>> GetDeviceTokensAsync(long userId);
+    Task InsertActivityLogAsync(ActivityLog log);
+    Task<IEnumerable<ActivityLog>> GetActivityLogsAsync(string? status, string? category, int limit);
 }
 

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Data;
 using ConnectBackend.Data;
 using ConnectBackend.Hubs;
+using ConnectBackend.Models;
 using Dapper;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
@@ -92,19 +93,22 @@ public class CallController : ControllerBase
     private readonly ConnectBackend.Services.IPushService _push;
     private readonly IHubContext<ChatHub> _hubContext;
     private readonly ConnectBackend.Services.ITurnCredentialsService _turnService;
+    private readonly ConnectBackend.Services.IActivityLogger _activityLogger;
 
     public CallController(
         IDbConnectionFactory dbFactory,
         ILogger<CallController> logger,
         ConnectBackend.Services.IPushService push,
         IHubContext<ChatHub> hubContext,
-        ConnectBackend.Services.ITurnCredentialsService turnService)
+        ConnectBackend.Services.ITurnCredentialsService turnService,
+        ConnectBackend.Services.IActivityLogger activityLogger)
     {
         _dbFactory = dbFactory;
         _logger = logger;
         _push = push;
         _hubContext = hubContext;
         _turnService = turnService;
+        _activityLogger = activityLogger;
     }
 
     [HttpGet("turn-credentials")]
@@ -179,6 +183,16 @@ public class CallController : ControllerBase
 
         await PersistCallLogAsync(log);
 
+        _ = _activityLogger.LogAsync(new CreateActivityLogDto
+        {
+            Action = "CallStarted",
+            Category = "Call",
+            Status = "Warning",
+            Message = $"Call invite initiated by {session.CallerName} to user {session.CalleeId}. Waiting for remote participant.",
+            UserId = session.CallerId.ToString(),
+            CorrelationId = session.CallId
+        });
+
         return Ok(new { success = true, data = session });
     }
 
@@ -213,6 +227,14 @@ public class CallController : ControllerBase
                 await PersistCallLogAsync(log);
             }
 
+            _ = _activityLogger.LogSuccessAsync(
+                action: "CallAnswered",
+                category: "Call",
+                message: $"Call {session.CallId} accepted by user {session.CalleeId}. WebRTC connection established.",
+                userId: session.CalleeId.ToString(),
+                correlationId: session.CallId
+            );
+
             return Ok(new { success = true, data = session });
         }
 
@@ -233,6 +255,14 @@ public class CallController : ControllerBase
                 log.EndedAt = DateTime.UtcNow;
                 await PersistCallLogAsync(log);
             }
+
+            _ = _activityLogger.LogWarningAsync(
+                action: "CallRejected",
+                category: "Call",
+                message: $"Call {session.CallId} declined or rejected by participant.",
+                userId: session.CalleeId.ToString(),
+                correlationId: session.CallId
+            );
 
             try
             {
@@ -341,6 +371,14 @@ public class CallController : ControllerBase
                     log.Status = "missed";
                 }
                 await PersistCallLogAsync(log);
+
+                _ = _activityLogger.LogSuccessAsync(
+                    action: "CallEnded",
+                    category: "Call",
+                    message: $"Call {session.CallId} ended. Status: {log.Status}, Duration: {log.DurationSeconds}s.",
+                    userId: session.CallerId.ToString(),
+                    correlationId: session.CallId
+                );
             }
         }
 
@@ -447,6 +485,12 @@ public class CallController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogWarning("Call log DB persist fallback: {Msg}", ex.Message);
+            _ = _activityLogger.LogWarningAsync(
+                action: "DatabasePersist",
+                category: "System",
+                message: "Call log DB persist fallback: External SQL Server not configured in container. Operating in high-speed in-memory mode.",
+                correlationId: log.CallId
+            );
         }
     }
 }

@@ -66,10 +66,10 @@ builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
 builder.Services.AddSingleton<IBigQueryService, BigQueryService>();
 builder.Services.AddSingleton<IPushService, PushService>();
 
-// Real-time WebSockets & SignalR
 builder.Services.AddSignalR();
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton<ITurnCredentialsService, CloudflareTurnService>();
+builder.Services.AddSingleton<IActivityLogger, ActivityLogger>();
 
 var app = builder.Build();
 
@@ -93,6 +93,25 @@ app.UseAuthorization();
 
 app.MapControllers();
 app.MapHub<ConnectBackend.Hubs.ChatHub>("/hubs/chat");
+
+// 7. Ensure BigQuery activity_logs table and schema exist on startup
+var bqService = app.Services.GetRequiredService<IBigQueryService>() as BigQueryService;
+if (bqService != null)
+{
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            await bqService.EnsureActivityLogsTableAsync();
+            var actLogger = app.Services.GetRequiredService<IActivityLogger>();
+            await actLogger.LogSuccessAsync("SystemStartup", "System", "Connect EV Backend service started with BigQuery activity logging active.");
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogWarning("Startup BigQuery table ensure warning: {Msg}", ex.Message);
+        }
+    });
+}
 
 var port = Environment.GetEnvironmentVariable("PORT") ?? "5000";
 app.Run($"http://0.0.0.0:{port}");
