@@ -207,10 +207,11 @@ public class PushService : IPushService
                         {
                             ChannelId = highPriority ? "calls" : "chat",
                             Sound = "default",
-                            Priority = NotificationPriority.HIGH,
+                            Priority = highPriority ? NotificationPriority.MAX : NotificationPriority.HIGH,
                             DefaultSound = true,
                             DefaultVibrateTimings = true,
-                            Icon = "ic_launcher",
+                            Visibility = NotificationVisibility.PUBLIC,
+                            Icon = "ic_notification",
                             ClickAction = "FLUTTER_NOTIFICATION_CLICK"
                         }
                     }
@@ -220,6 +221,11 @@ public class PushService : IPushService
                     var response = await messaging.SendAsync(msg); 
                     _logger.LogInformation("FCM push successfully sent to user {UserId} (Token: {Tok}...): {Resp}", 
                         userId, token[..Math.Min(token.Length, 15)], response);
+                }
+                catch (FirebaseMessagingException fEx) when (fEx.MessagingErrorCode == MessagingErrorCode.Unregistered)
+                {
+                    _logger.LogWarning("FCM token unregistered for user {UserId}. Removing from BigQuery.", userId);
+                    _ = _bq.ExecuteQueryAsync($"DELETE FROM `{_bq.ProjectId}.{_bq.DatasetId}.user_devices` WHERE fcm_token = '{token.Replace("'", "''")}'");
                 }
                 catch (Exception ex) { _logger.LogWarning("FCM send failed for token {Token}: {Msg}", token, ex.Message); }
             }

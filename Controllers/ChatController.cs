@@ -77,17 +77,37 @@ public class ChatController : ControllerBase
         // Broadcast in real-time via SignalR to conversation group
         await _hubContext.Clients.Group(dto.ConversationId).SendAsync("ReceiveMessage", saved);
 
-        // Push notification & SignalR direct alert to the recipient in a direct chat (id = chat_{a}_{b})
+        var preview = string.IsNullOrWhiteSpace(dto.MessageText) ? "Sent an attachment" : dto.MessageText;
+        var recipientUserIds = new HashSet<long>();
+
+        // 1. Direct chats: chat_{a}_{b} or chat_{targetId}
         var idParts = dto.ConversationId.Split('_');
         if (idParts.Length == 3 && idParts[0] == "chat" &&
             long.TryParse(idParts[1], out var ua) && long.TryParse(idParts[2], out var ub))
         {
             var receiverId = ua == userId ? ub : ua;
-            var preview = string.IsNullOrWhiteSpace(dto.MessageText) ? "Sent an attachment" : dto.MessageText;
+            recipientUserIds.Add(receiverId);
+        }
+        else if (idParts.Length == 2 && idParts[0] == "chat" && long.TryParse(idParts[1], out var singleTarget))
+        {
+            if (singleTarget != userId) recipientUserIds.Add(singleTarget);
+        }
+        else
+        {
+            // 2. Group conversation: look up participants from BigQuery
+            var participants = await _bqService.GetGroupParticipantUserIdsAsync(dto.ConversationId);
+            foreach (var pid in participants)
+            {
+                if (pid != userId) recipientUserIds.Add(pid);
+            }
+        }
 
-            // SignalR user-level push event (immediately triggers heads-up notifications even when app is open or on other screens)
+        // Send SignalR direct alert and FCM push notification to each recipient (unless muted/blocked)
+        foreach (var receiverId in recipientUserIds)
+        {
             try
             {
+                // SignalR user-level push event
                 await _hubContext.Clients.Group($"user_{receiverId}").SendAsync("NewMessageNotification", new
                 {
                     ConversationId = dto.ConversationId,
@@ -103,13 +123,30 @@ public class ChatController : ControllerBase
                 _logger.LogTrace("Direct SignalR notification failed: {Msg}", ex.Message);
             }
 
-            // Also send FCM push notification
-            _ = _push.SendToUserAsync(receiverId, userName, preview, new Dictionary<string, string>
+            // Check if conversation is muted or blocked by recipient
+            _ = Task.Run(async () =>
             {
-                ["type"] = "chat",
-                ["conversationId"] = dto.ConversationId,
-                ["senderId"] = userId.ToString(),
-                ["senderName"] = userName
+                try
+                {
+                    var isMutedOrBlocked = await _bqService.IsMutedOrBlockedAsync(receiverId, dto.ConversationId);
+                    if (isMutedOrBlocked)
+                    {
+                        _logger.LogInformation("FCM push suppressed: conversation {ConvId} is muted or blocked for user {ReceiverId}", dto.ConversationId, receiverId);
+                        return;
+                    }
+
+                    await _push.SendToUserAsync(receiverId, userName, preview, new Dictionary<string, string>
+                    {
+                        ["type"] = "chat",
+                        ["conversationId"] = dto.ConversationId,
+                        ["senderId"] = userId.ToString(),
+                        ["senderName"] = userName
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to send FCM push to receiver {ReceiverId}", receiverId);
+                }
             });
         }
 

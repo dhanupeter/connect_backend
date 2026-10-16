@@ -34,5 +34,7 @@ public interface IBigQueryService
     Task<bool> AddMemberAsync(string conversationId, long userId, bool isAdmin);
     Task<bool> RemoveMemberAsync(string conversationId, long userId);
     Task<bool> UpdateMemberRoleAsync(string conversationId, long userId, bool isAdmin);
+    Task<IEnumerable<long>> GetGroupParticipantUserIdsAsync(string conversationId);
+    Task<bool> IsMutedOrBlockedAsync(long userId, string conversationId);
 }
 

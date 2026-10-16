@@ -870,7 +870,9 @@ public class BigQueryService : IBigQueryService
                 MERGE `{ProjectId}.{DatasetId}.user_devices` T
                 USING (SELECT @uid AS user_id, @did AS device_id) S
                 ON T.user_id = S.user_id AND T.device_id = S.device_id
-                WHEN MATCHED THEN UPDATE SET fcm_token = @tok, platform = @plat, manufacturer = @man,
+                WHEN MATCHED THEN UPDATE SET 
+                    fcm_token = CASE WHEN @tok IS NOT NULL AND @tok != '' THEN @tok ELSE T.fcm_token END,
+                    platform = @plat, manufacturer = @man,
                     model = @mod, os_version = @os, app_version = @app, last_seen_at = CURRENT_TIMESTAMP()
                 WHEN NOT MATCHED THEN INSERT (user_id, device_id, fcm_token, platform, manufacturer, model, os_version, app_version, created_at, last_seen_at)
                     VALUES (@uid, @did, @tok, @plat, @man, @mod, @os, @app, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())";
@@ -1266,6 +1268,54 @@ public class BigQueryService : IBigQueryService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update member role in BigQuery {ConvId}", conversationId);
+            return false;
+        }
+    }
+
+    public async Task<IEnumerable<long>> GetGroupParticipantUserIdsAsync(string conversationId)
+    {
+        if (_client == null) return Enumerable.Empty<long>();
+        try
+        {
+            await EnsureParticipantsTableAsync();
+            var sql = $@"
+                SELECT DISTINCT user_id 
+                FROM `{ProjectId}.{DatasetId}.chat_conversation_participants`
+                WHERE conversation_id = '{conversationId.Replace("'", "''")}'";
+            var rows = await _client.ExecuteQueryAsync(sql, null);
+            return rows.Select(r => Convert.ToInt64(r["user_id"])).ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get participant user IDs for group {ConvId}", conversationId);
+            return Enumerable.Empty<long>();
+        }
+    }
+
+    public async Task<bool> IsMutedOrBlockedAsync(long userId, string conversationId)
+    {
+        if (_client == null) return false;
+        try
+        {
+            await EnsurePreferencesTableAsync();
+            var sql = $@"
+                SELECT is_muted, is_blocked 
+                FROM `{ProjectId}.{DatasetId}.user_preferences`
+                WHERE user_id = {userId} AND conversation_id = '{conversationId.Replace("'", "''")}'
+                LIMIT 1";
+            var rows = await _client.ExecuteQueryAsync(sql, null);
+            var r = rows.FirstOrDefault();
+            if (r != null)
+            {
+                var isMuted = r["is_muted"] != null && Convert.ToBoolean(r["is_muted"]);
+                var isBlocked = r["is_blocked"] != null && Convert.ToBoolean(r["is_blocked"]);
+                return isMuted || isBlocked;
+            }
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to check preferences for user {UserId}", userId);
             return false;
         }
     }
