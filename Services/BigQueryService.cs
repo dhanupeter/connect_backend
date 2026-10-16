@@ -917,6 +917,92 @@ public class BigQueryService : IBigQueryService
         }
     }
 
+    private bool _secretsTableReady;
+
+    public async Task EnsureSecretsTableAsync()
+    {
+        if (_client == null || _secretsTableReady) return;
+        try
+        {
+            var sql = $@"
+                CREATE TABLE IF NOT EXISTS `{ProjectId}.{DatasetId}.app_secrets` (
+                    secret_key STRING,
+                    encrypted_data STRING,
+                    algorithm STRING,
+                    updated_at TIMESTAMP
+                )";
+            await _client.ExecuteQueryAsync(sql, null);
+            _secretsTableReady = true;
+            _logger.LogInformation("BigQuery table `{ProjectId}.{DatasetId}.app_secrets` verified / ready.", ProjectId, DatasetId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to ensure BigQuery app_secrets table.");
+        }
+    }
+
+    public async Task SetSecretAsync(string secretKey, string encryptedData, string algorithm = "AES-256-CBC")
+    {
+        if (_client == null) return;
+        try
+        {
+            await EnsureSecretsTableAsync();
+            var sql = $@"
+                MERGE `{ProjectId}.{DatasetId}.app_secrets` T
+                USING (SELECT @skey AS secret_key) S
+                ON T.secret_key = S.secret_key
+                WHEN MATCHED THEN UPDATE SET
+                    encrypted_data = @edata,
+                    algorithm = @algo,
+                    updated_at = CURRENT_TIMESTAMP()
+                WHEN NOT MATCHED THEN INSERT (secret_key, encrypted_data, algorithm, updated_at)
+                    VALUES (@skey, @edata, @algo, CURRENT_TIMESTAMP())";
+
+            await _client.ExecuteQueryAsync(sql, new[]
+            {
+                new BigQueryParameter("skey", BigQueryDbType.String, secretKey),
+                new BigQueryParameter("edata", BigQueryDbType.String, encryptedData),
+                new BigQueryParameter("algo", BigQueryDbType.String, algorithm)
+            });
+            _logger.LogInformation("Secret {SecretKey} encrypted and stored in BigQuery app_secrets", secretKey);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to store secret {SecretKey} in BigQuery app_secrets", secretKey);
+        }
+    }
+
+    public async Task<string?> GetSecretAsync(string secretKey)
+    {
+        if (_client == null) return null;
+        try
+        {
+            await EnsureSecretsTableAsync();
+            var sql = $@"
+                SELECT encrypted_data
+                FROM `{ProjectId}.{DatasetId}.app_secrets`
+                WHERE secret_key = @skey
+                ORDER BY updated_at DESC
+                LIMIT 1";
+
+            var rows = await _client.ExecuteQueryAsync(sql, new[]
+            {
+                new BigQueryParameter("skey", BigQueryDbType.String, secretKey)
+            });
+
+            foreach (var r in rows)
+            {
+                return r["encrypted_data"]?.ToString();
+            }
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to query secret {SecretKey} from BigQuery.", secretKey);
+            return null;
+        }
+    }
+
     private const string Base64ServiceAccountKey = "ewogICJ0eXBlIjogInNlcnZpY2VfYWNjb3VudCIsCiAgInByb2plY3RfaWQiOiAiZXZlbnQtNTA2MTE3IiwKICAicHJpdmF0ZV9rZXlfaWQiOiAiY2ZkNGY1NzVlMTNiMGJiNjllYTRiM2JiZDAxZGY0Yjc0M2NiNDVkYiIsCiAgInByaXZhdGVfa2V5IjogIi0tLS0tQkVHSU4gUFJJVkFURSBLRVktLS0tLVxuTUlJRXZnSUJBREFOQmdrcWhraUc5dzBCQVFFRkFBU0NCS2d3Z2dTa0FnRUFBb0lCQVFDbVpKUk5QZ3o0QXRrOVxuMHdaR0tnUGZxcTk1cE1NQVEzUXJnNHBHSDBWTnlmWUpaVXI5dEhWZ1k1NlZuVW8zalQrRnhGMnhkcTVmN3orVlxucCtNc2crZ2MzZ0JCMFhWR09qNzNzQ3NweFNIT1NRdG1pRjdVYzBCdE5uMEw4ZGFtWm9NNkxYdGJDRjlRL3pUQ1xuMjZXWkJsNFAxcndrOGMxeExqRTZ1U2VSY2JRRGdBdUw1cm10T3FQMy9ZQ1hOOUZMeEVYdzNNaDVzclNvbFhlS1xuU25PMjFFN0IxSWVrOFFxVS9wQWJkeC9LRGFNeWdnbHBhQnIxeU44b29pVjd3RERXQlVjd29aZnlGL1crdFo0ZFxuNFlkaWF5OThmWUVobVBxejVMdUZjYUlENTRhUmd1dXhweEVZQXpFcjl3SENmWnkxcHJZemVFdmtMSHhxT09ZRVxuTDVKNDBkTnRBZ01CQUFFQ2dnRUFCT0xhT2dSeTlBdDlYcVBtUU1RMkZlall1MDA3enJPc1l5UzdPRUR0MDVGMVxuTUtSeFZjN3BUWG5QYTl4UkZCMkpPbi9nTW5obU9YbjRsNGYxRTFjU1IxcTdqak04NnVHRi9OY0hCWFI5QUNaRFxuOS9CVVBJL2YyZlVxS2VJaHFBUkZvVDA1ckp3cjFHQ1NKNUMwcGJBNnJlTmo1Zi9WeFJlU3FZTkxacWw4bkVlblxucnhFRW1DWVRqNjd4ZjFiNE5uVW5ubUJ2N0w5YTZYVTRrNlE0RUxYbVRlZTF1UnEvcHBJaHEvNHVpeGhGNHV4NFxuSlBwOVpkTW9zeWsrNk4xOWtkb2l3Qk5weGE2dk9EdFZtNXB3c1p6aDVhSE96NXVXQTYxZGtwZTV5dFQzYkV4VVxuL3NVdmxXUEgzaGViSlV6SjI2R3BlaEQxa2xGR0lEZzFlcWZzRW5KQ2Z3S0JnUURUcHI5K1BVSjI2TFhOd1g2WlxucjlaSzBGRkpodmlhNGUxMXVBQjVDQ3haVTJQeE9jc3RHL0hWOGo0aHRTdjUydUQ3T25kQVlFL3pHODlJeFlmelxuenRkU1lzQlBadTBVSXlrbUNnd25oUnpoNkR4WDAxcVYzRWJ5VndJbHpva29CSnQrMkl4STRxWkNRdkdIRG5QTVxubjJ1UXNyRDlabmFPdmtmLys4MHZQR1A4THdLQmdRREpRaHZGVzh0QTJHaDIzdmtQZzBXUXhhOEovMlN0L0tVMVxuaE1PN282KzlEbVYybGFidHVib25zQTg0Q3N2Wk5ESzBkNTZIcTJuU0lvTndXZGw0SEUxNEFIa1V5UmhGYzVHTFxua3N2UzY4dUtvbFBidytvOTFQak9UdXRvK3F2MEdSTW1kMDlIVE8wSEl4YTlqeUl6aC9ZNkYwMEtuUDNFZ0prVFxuOFhPRVlEdjNJd0tCZ1FDaTM0SWpZbjhBUklxTGdTaXNtano5SzV3eVNmU01NK3BwbWFSN2YwZXBvZHVhS2RCcFxuc1VTRVVMdHhjeHNaVmsrbDVWTVpya1E0SUNGK3JjdTJXbWttMUNtTHNQZ21jL3haY29meDdhVFJUOGNJQ3ZSOVxudUpxOEtTclU3MEJyRkVpWTc0bmRHTlc2emd0UjFGUldsaVBQb1VORWJaSTB2TWRwZlZ0ankwUmlMd0tCZ0FHbFxuWU1URWMyMGNWLzVnNUhpVUFrV2syRUdrclJZZk10cTFNMFNkbWhwWnU4cTBmcUVERzlxblBmaWZYZnR3eWRsZ1xuQVJQcSt2cVUvYTQxamVuRmtYeWh4RnUvS1V1b0hsQ2Q2cnpXNE50SmFKWXJqQWJsYndPQThidnlFT1gyTG9ucFxuLytQOVpSTGgzcFcrVGZGTjgxMldRek1MQmFoTnhQSzh6czBPWEc4eEFvR0JBSXhKbXVXb3NrVUZXdndLUGJoMFxuL05wWkZnaDkySkFKZ0lpLzRCNlMzcFVEZlA2czFJNngwWDZQUUE3NzkxSE1STEVCMXZMdjhCWTY0Y0hEZXJxZ1xucWNJLzBsdldleStGbWU4c25nTkI5TDdlWUxVbmpKcXkvY2NYcUhVb3RWazE0ajlmQlJmSWlCYkRjN2JIelQvbFxuRktzOThPTFJFRk5KUXNxOGpUazdMT0NtXG4tLS0tLUVORCBQUklWQVRFIEtFWS0tLS0tXG4iLAogICJjbGllbnRfZW1haWwiOiAiZXZlbnQtYmlncXVlcnktYWRtaW5AZXZlbnQtNTA2MTE3LmlhbS5nc2VydmljZWFjY291bnQuY29tIiwKICAiY2xpZW50X2lkIjogIjExMzMzNTQzOTA3MTIwMTIxNDcyMyIsCiAgImF1dGhfdXJpIjogImh0dHBzOi8vYWNjb3VudHMuZ29vZ2xlLmNvbS9vL29hdXRoMi9hdXRoIiwKICAidG9rZW5fdXJpIjogImh0dHBzOi8vb2F1dGgyLmdvb2dsZWFwaXMuY29tL3Rva2VuIiwKICAiYXV0aF9wcm92aWRlcl94NTA5X2NlcnRfdXJsIjogImh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL29hdXRoMi92MS9jZXJ0cyIsCiAgImNsaWVudF94NTA5X2NlcnRfdXJsIjogImh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL3JvYm90L3YxL21ldGFkYXRhL3g1MDkvZXZlbnQtYmlncXVlcnktYWRtaW4lNDBldmVudC01MDYxMTcuaWFtLmdzZXJ2aWNlYWNjb3VudC5jb20iLAogICJ1bml2ZXJzZV9kb21haW4iOiAiZ29vZ2xlYXBpcy5jb20iCn0K";
 }
 

@@ -162,14 +162,21 @@ public class CloudflareTurnService : ITurnCredentialsService
                         "stun:stun.l.google.com:19302",
                         "stun:stun1.l.google.com:19302",
                         "stun:stun2.l.google.com:19302",
+                        "stun:stun3.l.google.com:19302",
+                        "stun:stun4.l.google.com:19302",
                         "stun:stun.cloudflare.com:3478",
-                        "stun:relay.metered.ca:80"
+                        "stun:relay.metered.ca:80",
+                        "stun:relay.metered.ca:443"
                     }
                 },
                 new
                 {
                     urls = new[]
                     {
+                        "turns:relay.metered.ca:443?transport=tcp",
+                        "turn:relay.metered.ca:443",
+                        "turn:relay.metered.ca:443?transport=tcp",
+                        "turns:relay.metered.ca:5349?transport=tcp",
                         "turn:relay.metered.ca:80",
                         "turn:relay.metered.ca:80?transport=tcp"
                     },

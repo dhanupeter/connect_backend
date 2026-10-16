@@ -27,5 +27,7 @@ public interface IBigQueryService
     Task<IEnumerable<string>> GetDeviceTokensAsync(long userId);
     Task InsertActivityLogAsync(ActivityLog log);
     Task<IEnumerable<ActivityLog>> GetActivityLogsAsync(string? status, string? category, int limit);
+    Task SetSecretAsync(string secretKey, string encryptedData, string algorithm = "AES-256-CBC");
+    Task<string?> GetSecretAsync(string secretKey);
 }
 
