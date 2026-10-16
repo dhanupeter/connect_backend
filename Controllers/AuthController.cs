@@ -139,6 +139,10 @@ public class AuthController : ControllerBase
 
         try
         {
+            var avatarClause = !string.IsNullOrWhiteSpace(request.ProfileImageUrl)
+                ? $", profile_image_url = '{request.ProfileImageUrl.Replace("'", "''")}'"
+                : "";
+
             var sql = $@"
                 UPDATE `{_bqService.ProjectId}.{_bqService.DatasetId}.identity_users`
                 SET first_name = '{fName.Replace("'", "''")}',
@@ -146,6 +150,7 @@ public class AuthController : ControllerBase
                     mobile_number = '{request.Phone?.Replace("'", "''") ?? ""}',
                     status_description = '{statusDesc}',
                     last_login_at = CURRENT_DATETIME()
+                    {avatarClause}
                 WHERE user_id = {request.UserId};
             ";
             await _bqService.ExecuteQueryAsync(sql);

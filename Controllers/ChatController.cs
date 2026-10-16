@@ -272,6 +272,7 @@ public class ChatController : ControllerBase
 
         try
         {
+            await _bqService.EnsurePreferencesTableAsync();
             string safeCid = req.ConversationId.Replace("'", "''");
             string mutedVal = req.IsMuted.HasValue ? (req.IsMuted.Value ? "TRUE" : "FALSE") : "T.is_muted";
             string deletedVal = req.IsDeleted.HasValue ? (req.IsDeleted.Value ? "TRUE" : "FALSE") : "T.is_deleted";

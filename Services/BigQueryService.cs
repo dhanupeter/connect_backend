@@ -162,6 +162,23 @@ public class BigQueryService : IBigQueryService
 
             await _client.InsertRowAsync(DatasetId, "chat_conversations", row);
             _logger.LogInformation("Conversation {ConversationId} inserted into BigQuery chat_conversations", conv.ConversationId);
+
+            if (conv.IsGroup && conv.CreatedByUserId.HasValue)
+            {
+                await EnsureParticipantsTableAsync();
+                var pRow = new BigQueryInsertRow
+                {
+                    ["conversation_id"] = conv.ConversationId,
+                    ["user_id"] = conv.CreatedByUserId.Value,
+                    ["is_admin"] = true,
+                    ["joined_at"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+                };
+                try
+                {
+                    await _client.InsertRowAsync(DatasetId, "chat_conversation_participants", pRow);
+                }
+                catch { }
+            }
         }
         catch (Exception ex)
         {
@@ -236,6 +253,7 @@ public class BigQueryService : IBigQueryService
             var memberGroupIds = new HashSet<string>();
             try
             {
+                await EnsureParticipantsTableAsync();
                 var mgRows = await _client.ExecuteQueryAsync(memberGroupsSql, null);
                 foreach (var mr in mgRows)
                 {
@@ -247,6 +265,48 @@ public class BigQueryService : IBigQueryService
 
             // Filter groups: show if user is participant, created it, or group has members
             list = list.Where(c => c.IsGroup && (c.CreatedByUserId == userId || memberGroupIds.Contains(c.ConversationId) || c.ParticipantCount > 0)).ToList();
+
+            // Load participants for the groups
+            var groupIds = list.Where(c => c.IsGroup).Select(c => $"'{c.ConversationId.Replace("'", "''")}'").ToList();
+            if (groupIds.Any())
+            {
+                try
+                {
+                    await EnsureParticipantsTableAsync();
+                    var partSql = $@"
+                        SELECT conversation_id, user_id, is_admin, joined_at
+                        FROM `{ProjectId}.{DatasetId}.chat_conversation_participants`
+                        WHERE conversation_id IN ({string.Join(",", groupIds)})";
+                    var partRows = await _client.ExecuteQueryAsync(partSql, null);
+                    var groupMembers = new Dictionary<string, List<GroupMemberDto>>();
+                    foreach (var pr in partRows)
+                    {
+                        var pcid = pr["conversation_id"]?.ToString() ?? "";
+                        if (!groupMembers.ContainsKey(pcid)) groupMembers[pcid] = new List<GroupMemberDto>();
+                        var puid = Convert.ToInt64(pr["user_id"] ?? 0);
+                        groupMembers[pcid].Add(new GroupMemberDto
+                        {
+                            UserId = puid,
+                            Name = $"Driver {puid}",
+                            IsAdmin = Convert.ToBoolean(pr["is_admin"] ?? false),
+                            JoinedAt = pr["joined_at"] is DateTime jdt ? jdt : DateTime.UtcNow
+                        });
+                    }
+
+                    foreach (var conv in list.Where(c => c.IsGroup))
+                    {
+                        if (groupMembers.TryGetValue(conv.ConversationId, out var mems))
+                        {
+                            conv.Members = mems;
+                            conv.ParticipantCount = Math.Max(conv.ParticipantCount, mems.Count);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to load group participants from BigQuery");
+                }
+            }
 
             // Direct chats: derived from messages (conversation id = chat_{minId}_{maxId})
             var dmSql = $@"
@@ -262,7 +322,23 @@ public class BigQueryService : IBigQueryService
             var dmRows = await _client.ExecuteQueryAsync(dmSql, null);
             var contacts = (await GetContactsAsync()).GroupBy(u => u.UserId).ToDictionary(g => g.Key, g => g.First());
 
+            // Populate member names & avatars from contacts for groups
+            foreach (var conv in list.Where(c => c.IsGroup))
+            {
+                foreach (var m in conv.Members)
+                {
+                    if (contacts.TryGetValue(m.UserId, out var cu))
+                    {
+                        m.Name = cu.Name;
+                        m.AvatarUrl = cu.AvatarUrl;
+                        m.Plate = cu.Plate;
+                        m.CarModel = cu.CarModel;
+                    }
+                }
+            }
+
             // Check user preferences for muted / deleted / blocked
+            await EnsurePreferencesTableAsync();
             var prefsSql = $@"SELECT conversation_id, is_muted, is_deleted, is_blocked FROM `{ProjectId}.{DatasetId}.user_preferences` WHERE user_id = {userId}";
             var prefMap = new Dictionary<string, (bool Muted, bool Deleted, bool Blocked)>();
             try
@@ -283,6 +359,17 @@ public class BigQueryService : IBigQueryService
             }
             catch { }
 
+            // Filter groups deleted and assign muted
+            list = list.Where(c =>
+            {
+                if (prefMap.TryGetValue(c.ConversationId, out var pref))
+                {
+                    if (pref.Deleted) return false;
+                    c.IsMuted = pref.Muted;
+                }
+                return true;
+            }).ToList();
+
             foreach (var r in dmRows)
             {
                 var cid = r["conversation_id"]?.ToString() ?? "";
@@ -290,28 +377,39 @@ public class BigQueryService : IBigQueryService
                 if (parts.Length != 3 || !long.TryParse(parts[1], out var a) || !long.TryParse(parts[2], out var b)) continue;
                 if (a != userId && b != userId) continue;
                 var otherId = a == userId ? b : a;
-                if (!contacts.TryGetValue(otherId, out var other)) continue; // Only real registered users
 
-                if (prefMap.TryGetValue(cid, out var pref) && (pref.Deleted || pref.Blocked))
+                bool isMuted = false;
+                bool isBlocked = false;
+                if (prefMap.TryGetValue(cid, out var pref))
                 {
-                    continue; // Skipped because user deleted or blocked this conversation
+                    if (pref.Deleted) continue; // Skipped because user deleted this conversation
+                    isMuted = pref.Muted;
+                    isBlocked = pref.Blocked;
                 }
+
+                contacts.TryGetValue(otherId, out var other);
+                var title = other?.Name ?? $"EV Driver {otherId}";
+                var avatar = other?.AvatarUrl ?? "https://lh3.googleusercontent.com/a/default-user";
+                var carModel = other?.CarModel ?? "EV Connected";
+                var isOnline = other != null ? string.Equals(other.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase) : true;
 
                 var ts = r["created_at"] is DateTime dt2 ? dt2 : DateTime.UtcNow;
                 list.Add(new Conversation
                 {
                     ConversationId = cid,
                     IsGroup = false,
-                    Title = other.Name,
-                    AvatarUrl = other.AvatarUrl ?? "https://lh3.googleusercontent.com/a/default-user",
+                    Title = title,
+                    AvatarUrl = avatar,
                     OtherUserId = otherId,
                     ParticipantCount = 2,
-                    CarModel = other.CarModel,
+                    CarModel = carModel,
                     CreatedAt = ts,
                     UpdatedAt = ts,
                     LastMessage = r["message_text"]?.ToString(),
                     LastMessageTime = ts,
-                    IsOnline = string.Equals(other.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase)
+                    IsOnline = isOnline,
+                    IsMuted = isMuted,
+                    IsBlocked = isBlocked
                 });
             }
 
@@ -1000,6 +1098,175 @@ public class BigQueryService : IBigQueryService
         {
             _logger.LogError(ex, "Failed to query secret {SecretKey} from BigQuery.", secretKey);
             return null;
+        }
+    }
+
+    private bool _preferencesTableReady;
+
+    public async Task EnsurePreferencesTableAsync()
+    {
+        if (_client == null || _preferencesTableReady) return;
+        try
+        {
+            var sql = $@"
+                CREATE TABLE IF NOT EXISTS `{ProjectId}.{DatasetId}.user_preferences` (
+                    user_id INT64,
+                    conversation_id STRING,
+                    is_muted BOOL,
+                    is_deleted BOOL,
+                    is_blocked BOOL,
+                    updated_at TIMESTAMP
+                )";
+            await _client.ExecuteQueryAsync(sql, null);
+            _preferencesTableReady = true;
+            _logger.LogInformation("BigQuery table `{ProjectId}.{DatasetId}.user_preferences` verified / ready.", ProjectId, DatasetId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to ensure BigQuery user_preferences table.");
+        }
+    }
+
+    private bool _participantsTableReady;
+
+    public async Task EnsureParticipantsTableAsync()
+    {
+        if (_client == null || _participantsTableReady) return;
+        try
+        {
+            var sql = $@"
+                CREATE TABLE IF NOT EXISTS `{ProjectId}.{DatasetId}.chat_conversation_participants` (
+                    conversation_id STRING,
+                    user_id INT64,
+                    is_admin BOOL,
+                    joined_at TIMESTAMP
+                )";
+            await _client.ExecuteQueryAsync(sql, null);
+            _participantsTableReady = true;
+            _logger.LogInformation("BigQuery table `{ProjectId}.{DatasetId}.chat_conversation_participants` verified / ready.", ProjectId, DatasetId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to ensure BigQuery chat_conversation_participants table.");
+        }
+    }
+
+    public async Task<Conversation?> UpdateGroupAsync(string conversationId, UpdateGroupDto dto)
+    {
+        if (_client == null) return null;
+        try
+        {
+            var setClauses = new List<string>();
+            if (!string.IsNullOrEmpty(dto.Title)) setClauses.Add($"title = '{dto.Title.Replace("'", "''")}'");
+            if (!string.IsNullOrEmpty(dto.Description)) setClauses.Add($"description = '{dto.Description.Replace("'", "''")}'");
+            if (!string.IsNullOrEmpty(dto.AvatarUrl)) setClauses.Add($"avatar_url = '{dto.AvatarUrl.Replace("'", "''")}'");
+            if (dto.RadiusKm.HasValue) setClauses.Add($"scope_radius_km = {dto.RadiusKm.Value}");
+            setClauses.Add("updated_at = CURRENT_TIMESTAMP()");
+
+            var sql = $@"
+                UPDATE `{ProjectId}.{DatasetId}.chat_conversations`
+                SET {string.Join(", ", setClauses)}
+                WHERE conversation_id = '{conversationId.Replace("'", "''")}';
+            ";
+            await _client.ExecuteQueryAsync(sql, null);
+
+            var getSql = $@"SELECT * FROM `{ProjectId}.{DatasetId}.chat_conversations` WHERE conversation_id = '{conversationId.Replace("'", "''")}'";
+            var rows = await _client.ExecuteQueryAsync(getSql, null);
+            var r = rows.FirstOrDefault();
+
+            return new Conversation
+            {
+                ConversationId = conversationId,
+                IsGroup = true,
+                Title = r?["title"]?.ToString() ?? dto.Title ?? "",
+                Description = r?["description"]?.ToString() ?? dto.Description,
+                AvatarUrl = r?["avatar_url"]?.ToString() ?? dto.AvatarUrl,
+                ScopeRadiusKm = Convert.ToInt32(r?["scope_radius_km"] ?? dto.RadiusKm ?? 100),
+                Category = r?["category"]?.ToString() ?? "General",
+                CreatedByUserId = r?["created_by_user_id"] != null ? Convert.ToInt64(r["created_by_user_id"]) : null,
+                ParticipantCount = Convert.ToInt32(r?["participant_count"] ?? 1),
+                CreatedAt = r?["created_at"] is DateTime dt ? dt : DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+                IsOnline = true
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update group in BigQuery {ConvId}", conversationId);
+            return null;
+        }
+    }
+
+    public async Task<bool> AddMemberAsync(string conversationId, long userId, bool isAdmin)
+    {
+        if (_client == null) return false;
+        try
+        {
+            await EnsureParticipantsTableAsync();
+            var sql = $@"
+                MERGE `{ProjectId}.{DatasetId}.chat_conversation_participants` T
+                USING (SELECT '{conversationId.Replace("'", "''")}' AS conversation_id, {userId} AS user_id) S
+                ON T.conversation_id = S.conversation_id AND T.user_id = S.user_id
+                WHEN MATCHED THEN UPDATE SET is_admin = {(isAdmin ? "TRUE" : "FALSE")}
+                WHEN NOT MATCHED THEN INSERT (conversation_id, user_id, is_admin, joined_at)
+                VALUES ('{conversationId.Replace("'", "''")}', {userId}, {(isAdmin ? "TRUE" : "FALSE")}, CURRENT_TIMESTAMP());
+
+                UPDATE `{ProjectId}.{DatasetId}.chat_conversations`
+                SET participant_count = (SELECT COUNT(1) FROM `{ProjectId}.{DatasetId}.chat_conversation_participants` WHERE conversation_id = '{conversationId.Replace("'", "''")}')
+                WHERE conversation_id = '{conversationId.Replace("'", "''")}';
+            ";
+            await _client.ExecuteQueryAsync(sql, null);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to add member in BigQuery {ConvId}", conversationId);
+            return false;
+        }
+    }
+
+    public async Task<bool> RemoveMemberAsync(string conversationId, long userId)
+    {
+        if (_client == null) return false;
+        try
+        {
+            await EnsureParticipantsTableAsync();
+            var sql = $@"
+                DELETE FROM `{ProjectId}.{DatasetId}.chat_conversation_participants`
+                WHERE conversation_id = '{conversationId.Replace("'", "''")}' AND user_id = {userId};
+
+                UPDATE `{ProjectId}.{DatasetId}.chat_conversations`
+                SET participant_count = (SELECT COUNT(1) FROM `{ProjectId}.{DatasetId}.chat_conversation_participants` WHERE conversation_id = '{conversationId.Replace("'", "''")}')
+                WHERE conversation_id = '{conversationId.Replace("'", "''")}';
+            ";
+            await _client.ExecuteQueryAsync(sql, null);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to remove member in BigQuery {ConvId}", conversationId);
+            return false;
+        }
+    }
+
+    public async Task<bool> UpdateMemberRoleAsync(string conversationId, long userId, bool isAdmin)
+    {
+        if (_client == null) return false;
+        try
+        {
+            await EnsureParticipantsTableAsync();
+            var sql = $@"
+                UPDATE `{ProjectId}.{DatasetId}.chat_conversation_participants`
+                SET is_admin = {(isAdmin ? "TRUE" : "FALSE")}
+                WHERE conversation_id = '{conversationId.Replace("'", "''")}' AND user_id = {userId};
+            ";
+            await _client.ExecuteQueryAsync(sql, null);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update member role in BigQuery {ConvId}", conversationId);
+            return false;
         }
     }
 

@@ -229,6 +229,16 @@ public class ChatRepository : IChatRepository
 
     public async Task<Conversation?> UpdateGroupAsync(string conversationId, UpdateGroupDto dto)
     {
+        if (_bqService.IsConfigured)
+        {
+            var bqGroup = await _bqService.UpdateGroupAsync(conversationId, dto);
+            if (bqGroup != null)
+            {
+                _memoryConversations[conversationId] = bqGroup;
+                return bqGroup;
+            }
+        }
+
         try
         {
             using var conn = _dbFactory.CreateConnection();
@@ -260,6 +270,11 @@ public class ChatRepository : IChatRepository
 
     public async Task<bool> UpdateMemberRoleAsync(string conversationId, long userId, bool isAdmin)
     {
+        if (_bqService.IsConfigured)
+        {
+            await _bqService.UpdateMemberRoleAsync(conversationId, userId, isAdmin);
+        }
+
         try
         {
             using var conn = _dbFactory.CreateConnection();
@@ -283,6 +298,11 @@ public class ChatRepository : IChatRepository
 
     public async Task<bool> RemoveMemberAsync(string conversationId, long userId)
     {
+        if (_bqService.IsConfigured)
+        {
+            await _bqService.RemoveMemberAsync(conversationId, userId);
+        }
+
         try
         {
             using var conn = _dbFactory.CreateConnection();
@@ -305,6 +325,11 @@ public class ChatRepository : IChatRepository
 
     public async Task<bool> AddMemberAsync(string conversationId, long userId, bool isAdmin)
     {
+        if (_bqService.IsConfigured)
+        {
+            await _bqService.AddMemberAsync(conversationId, userId, isAdmin);
+        }
+
         try
         {
             using var conn = _dbFactory.CreateConnection();

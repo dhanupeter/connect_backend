@@ -29,5 +29,10 @@ public interface IBigQueryService
     Task<IEnumerable<ActivityLog>> GetActivityLogsAsync(string? status, string? category, int limit);
     Task SetSecretAsync(string secretKey, string encryptedData, string algorithm = "AES-256-CBC");
     Task<string?> GetSecretAsync(string secretKey);
+    Task EnsurePreferencesTableAsync();
+    Task<Conversation?> UpdateGroupAsync(string conversationId, UpdateGroupDto dto);
+    Task<bool> AddMemberAsync(string conversationId, long userId, bool isAdmin);
+    Task<bool> RemoveMemberAsync(string conversationId, long userId);
+    Task<bool> UpdateMemberRoleAsync(string conversationId, long userId, bool isAdmin);
 }
 
