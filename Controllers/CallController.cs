@@ -177,7 +177,9 @@ public class CallController : ControllerBase
                 ["callId"] = session.CallId,
                 ["callType"] = session.CallType,
                 ["callerId"] = session.CallerId.ToString(),
-                ["callerName"] = session.CallerName
+                ["callerName"] = session.CallerName,
+                ["callerAvatar"] = session.CallerAvatar ?? "",
+                ["callerCar"] = session.CallerCar ?? ""
             },
             highPriority: true);
 
