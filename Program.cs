@@ -43,14 +43,15 @@ builder.Services.AddAuthorization();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// 4. Add CORS policy for Flutter mobile, web, and emulator clients
+// 4. Add CORS policy for Flutter mobile, web, and emulator clients (supports SignalR negotiate with or without credentials)
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
     {
-        policy.AllowAnyOrigin()
+        policy.SetIsOriginAllowed(_ => true)
               .AllowAnyMethod()
-              .AllowAnyHeader();
+              .AllowAnyHeader()
+              .AllowCredentials();
     });
 });
 
@@ -75,6 +76,18 @@ var app = builder.Build();
 
 app.UseCors("AllowAll");
 app.UseStaticFiles();
+
+// Fallback for ephemeral container /uploads/chat/ images after container redeploy
+app.MapGet("/uploads/chat/{fileName}", (string fileName, IWebHostEnvironment env) =>
+{
+    var webRoot = env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
+    var filePath = Path.Combine(webRoot, "uploads", "chat", fileName);
+    if (File.Exists(filePath))
+    {
+        return Results.File(filePath, "image/jpeg");
+    }
+    return Results.Redirect("https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80");
+});
 
 // 6. Enable Swagger & Swagger UI middleware
 app.UseSwagger();
